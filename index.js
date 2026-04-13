@@ -97,6 +97,7 @@ function parseOrderText(text) {
   let itemName = text.trim();
   let price = null;
   let note = null;
+  let qty = 1;
 
   // 抓括號備註
   const bracketMatch = itemName.match(/[（(]([^）)]+)[）)]/);
@@ -112,14 +113,23 @@ function parseOrderText(text) {
     note = noteKeywordMatch[2].trim();
   }
 
-  // 抓價格
+  // 抓「價格*數量」格式：雞腿便當80*2 或 雞腿便當80×2 或 雞腿便當80x2 或 雞腿便當80X2
+  const priceQtyMatch = itemName.match(/^(.+?)(\d+)[*×xX](\d+)$/);
+  if (priceQtyMatch) {
+    itemName = priceQtyMatch[1].trim();
+    price = parseInt(priceQtyMatch[2]);
+    qty = parseInt(priceQtyMatch[3]);
+    return { itemName, price, note, qty };
+  }
+
+  // 抓價格（空格後接數字）
   const priceMatch = itemName.match(/^(.+?)\s+\$?(\d+)$/);
   if (priceMatch) {
     itemName = priceMatch[1].trim();
     price = parseInt(priceMatch[2]);
   }
 
-  return { itemName, price, note };
+  return { itemName, price, note, qty };
 }
 
 // ===== 建立結單訊息（2則）=====
@@ -608,7 +618,7 @@ async function handleMessage(event) {
   }
 
   // ── 點餐 ──
-  const { itemName, price, note } = parseOrderText(text);
+  const { itemName, price, note, qty } = parseOrderText(text);
   if (!itemName) return;
 
   const name = await getMemberName(groupId, userId);
@@ -626,7 +636,7 @@ async function handleMessage(event) {
   }
 
   session.orders[userId].dept = depts[userId] || null;
-  session.orders[userId].items.push({ name: itemName, price, note, qty: 1 });
+  session.orders[userId].items.push({ name: itemName, price, note, qty });
 
   // 靜默記錄，不回應
 }
