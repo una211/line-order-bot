@@ -12,10 +12,22 @@ const ALLOWED_GROUP_IDS = process.env.ALLOWED_GROUP_IDS
   : [];
 
 // ===== 資料儲存 =====
-// sessions[groupId] = { isOpen, openTime, deadline, deadlineTimer, orders }
-// orders[userId] = { name, dept, items: [{ name, price, note, qty }] }
 const sessions = {};
-const deptSettings = {}; // deptSettings[groupId][userId] = '行政部'
+const deptSettings = {};
+const pendingDeptSettings = {}; // { groupId: { name: dept } } 等待綁定的科室設定
+
+// ===== 台灣時間 =====
+function getTaiwanTime() {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
+}
+
+function formatTime(date) {
+  if (!date) return '';
+  const tw = new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
+  const h = String(tw.getHours()).padStart(2, '0');
+  const m = String(tw.getMinutes()).padStart(2, '0');
+  return `${h}:${m}`;
+}
 
 // ===== LINE API =====
 async function replyMessage(replyToken, messages) {
@@ -75,146 +87,148 @@ function getDeptSettings(groupId) {
   return deptSettings[groupId];
 }
 
-function formatTime(date) {
-  if (!date) return '';
-  const h = String(date.getHours()).padStart(2, '0');
-  const m = String(date.getMinutes()).padStart(2, '0');
-  return `${h}:${m}`;
+function getPendingDeptSettings(groupId) {
+  if (!pendingDeptSettings[groupId]) pendingDeptSettings[groupId] = {};
+  return pendingDeptSettings[groupId];
 }
 
 // ===== 解析點餐訊息 =====
-// 支援格式：
-//   雞腿便當 80
-//   雞腿便當（少冰）80
-//   雞腿便當 備註 少冰
-//   雞腿便當 80（少冰）
 function parseOrderText(text) {
   let itemName = text.trim();
   let price = null;
   let note = null;
-  let qty = 1;
 
-  // 抓括號備註：（xxx）或 (xxx)
+  // 抓括號備註
   const bracketMatch = itemName.match(/[（(]([^）)]+)[）)]/);
   if (bracketMatch) {
     note = bracketMatch[1].trim();
     itemName = itemName.replace(bracketMatch[0], '').trim();
   }
 
-  // 抓「備註」關鍵字備註
+  // 抓「備註」關鍵字
   const noteKeywordMatch = itemName.match(/^(.+?)\s+備註\s+(.+)$/);
   if (noteKeywordMatch) {
     itemName = noteKeywordMatch[1].trim();
     note = noteKeywordMatch[2].trim();
   }
 
-  // 抓價格（結尾數字，前面可有 $ 或空格）
+  // 抓價格
   const priceMatch = itemName.match(/^(.+?)\s+\$?(\d+)$/);
   if (priceMatch) {
     itemName = priceMatch[1].trim();
     price = parseInt(priceMatch[2]);
   }
 
-  return { itemName, price, note, qty };
+  return { itemName, price, note };
 }
 
 // ===== 建立結單訊息（2則）=====
-function buildSummaryMessages(session, groupId, closedTime) {
+function buildSummaryMessages(session, groupId) {
   const orders = session.orders;
   const userIds = Object.keys(orders).filter(uid => orders[uid].items.length > 0);
   const depts = getDeptSettings(groupId);
 
   if (userIds.length === 0) {
-    return [{ type: 'text', text: '📋 本輪沒有任何訂單。' }];
+    return [{ type: 'text', text: '本輪沒有任何訂單。' }];
   }
 
-  const openTimeStr = session.openTime ? formatTime(session.openTime) : '';
-  const closeTimeStr = closedTime ? formatTime(closedTime) : formatTime(new Date());
-  const timeStr = `⏰ 開單：${openTimeStr}　結單：${closeTimeStr}`;
-
-  // ===== 第1則：依品項統計 =====
-  const itemMap = {}; // { itemName: { qty, totalPrice, hasPrice } }
-  for (const uid of userIds) {
-    for (const item of orders[uid].items) {
-      if (!itemMap[item.name]) {
-        itemMap[item.name] = { qty: 0, totalPrice: 0, hasPrice: false };
-      }
-      itemMap[item.name].qty += item.qty;
-      if (item.price !== null) {
-        itemMap[item.name].totalPrice += item.price * item.qty;
-        itemMap[item.name].hasPrice = true;
-      }
-    }
-  }
-
-  let totalAmount = 0;
-  let totalQty = 0;
-  let msg1 = `🔒 已結單！\n${timeStr}\n\n`;
-  msg1 += `━━━━━━━━━━━━━━━━━━━━\n`;
-  msg1 += `🍱 第1則：依品項統計\n`;
-  msg1 += `━━━━━━━━━━━━━━━━━━━━\n`;
-
-  for (const [name, data] of Object.entries(itemMap)) {
-    const priceStr = data.hasPrice ? `　小計 $${data.totalPrice}` : `　小計 $0`;
-    msg1 += `  ${name} × ${data.qty}${priceStr}\n`;
-    totalAmount += data.hasPrice ? data.totalPrice : 0;
-    totalQty += data.qty;
-  }
-
-  msg1 += `━━━━━━━━━━━━━━━━━━━━\n`;
-  msg1 += `👥 共 ${userIds.length} 人，${totalQty} 份\n`;
-  msg1 += `💰 總金額：$${totalAmount} 元`;
-
-  // ===== 第2則：依科室統計 =====
+  // ===== 第1則：依科室，依餐點整理 =====
   // 分組
-  const deptMap = {}; // { deptName: [ { name, items } ] }
+  const deptMap = {};
   const noDept = [];
 
   for (const uid of userIds) {
     const o = orders[uid];
     const dept = depts[uid] || null;
-    const entry = { name: o.name, items: o.items };
     if (dept) {
       if (!deptMap[dept]) deptMap[dept] = [];
-      deptMap[dept].push(entry);
+      deptMap[dept].push({ uid, name: o.name, items: o.items });
     } else {
-      noDept.push(entry);
+      noDept.push({ uid, name: o.name, items: o.items });
     }
   }
 
-  let msg2 = `━━━━━━━━━━━━━━━━━━━━\n`;
-  msg2 += `🏢 第2則：依科室統計\n`;
-  msg2 += `━━━━━━━━━━━━━━━━━━━━\n`;
-
-  const formatPersonItems = (items) => {
-    return items.map(item => {
-      const qtyStr = item.qty > 1 ? ` x${item.qty}` : '';
-      const noteStr = item.note ? `（${item.note}）` : '';
-      const priceStr = item.price !== null ? ` $${item.price * item.qty}` : ` $0`;
-      return `${item.name}${qtyStr}${noteStr}${priceStr}`;
-    }).join('、');
-  };
-
-  for (const [dept, members] of Object.entries(deptMap)) {
-    const deptTotal = members.reduce((sum, m) =>
-      sum + m.items.reduce((s, i) => s + (i.price !== null ? i.price * i.qty : 0), 0), 0);
-    msg2 += `\n🏢 ${dept}（${members.length}人）\n`;
+  // 計算科室內依餐點彙整
+  function buildDeptSection(members) {
+    // 把同科室的餐點整理：{ itemName: { price, qty, names[] } }
+    const itemMap = {};
     for (const m of members) {
-      msg2 += `  ${m.name}：${formatPersonItems(m.items)}\n`;
+      for (const item of m.items) {
+        const key = item.name;
+        if (!itemMap[key]) itemMap[key] = { price: item.price, qty: 0, names: [] };
+        itemMap[key].qty += item.qty;
+        if (!itemMap[key].names.includes(m.name)) {
+          itemMap[key].names.push(m.name);
+        }
+      }
     }
-    msg2 += `  小計：$${deptTotal}\n`;
+    return itemMap;
   }
 
-  if (noDept.length > 0) {
-    const noDeptTotal = noDept.reduce((sum, m) =>
-      sum + m.items.reduce((s, i) => s + (i.price !== null ? i.price * i.qty : 0), 0), 0);
-    msg2 += `\n📦 未設定科室（${noDept.length}人）\n`;
-    for (const m of noDept) {
-      msg2 += `  ${m.name}：${formatPersonItems(m.items)}\n`;
-    }
-    msg2 += `  小計：$${noDeptTotal}\n`;
-    msg2 += `\n⚠️ 以上 ${noDept.length} 人尚未設定科室\n請輸入「設定科室 你的部門」`;
+  function calcDeptTotal(itemMap) {
+    return Object.values(itemMap).reduce((sum, v) =>
+      sum + (v.price !== null ? v.price * v.qty : 0), 0);
   }
+
+  let msg1 = '已結單！\n';
+  let grandTotal = 0;
+  let grandQty = 0;
+
+  // 有科室的部分
+  for (const [dept, members] of Object.entries(deptMap)) {
+    const itemMap = buildDeptSection(members);
+    const deptTotal = calcDeptTotal(itemMap);
+    grandTotal += deptTotal;
+    msg1 += `\n${dept}　小計 $${deptTotal}\n`;
+    for (const [itemName, data] of Object.entries(itemMap)) {
+      const priceStr = data.price !== null ? `${data.price}` : '0';
+      const names = data.names.join('、');
+      msg1 += `  ${itemName}${priceStr}×${data.qty}（${names}）\n`;
+      grandQty += data.qty;
+    }
+  }
+
+  // 未設定科室
+  if (noDept.length > 0) {
+    const itemMap = buildDeptSection(noDept);
+    const deptTotal = calcDeptTotal(itemMap);
+    grandTotal += deptTotal;
+    msg1 += `\n未設定科室　小計 $${deptTotal}\n`;
+    for (const [itemName, data] of Object.entries(itemMap)) {
+      const priceStr = data.price !== null ? `${data.price}` : '0';
+      const names = data.names.join('、');
+      msg1 += `  ${itemName}${priceStr}×${data.qty}（${names}）\n`;
+      grandQty += data.qty;
+    }
+  }
+
+  msg1 += `\n共 ${grandQty} 份\n總金額：$${grandTotal} 元`;
+
+  // ===== 第2則：依餐點統計 =====
+  const allItemMap = {};
+  let totalQty = 0;
+  let totalAmount = 0;
+
+  for (const uid of userIds) {
+    for (const item of orders[uid].items) {
+      if (!allItemMap[item.name]) {
+        allItemMap[item.name] = { price: item.price, qty: 0 };
+      }
+      allItemMap[item.name].qty += item.qty;
+      if (item.price !== null && allItemMap[item.name].price === null) {
+        allItemMap[item.name].price = item.price;
+      }
+      totalQty += item.qty;
+      totalAmount += item.price !== null ? item.price * item.qty : 0;
+    }
+  }
+
+  let msg2 = '';
+  for (const [itemName, data] of Object.entries(allItemMap)) {
+    const priceStr = data.price !== null ? `${data.price}` : '0';
+    msg2 += `  ${itemName}${priceStr}×${data.qty}\n`;
+  }
+  msg2 += `\n共 ${totalQty} 份\n總金額：$${totalAmount} 元`;
 
   return [
     { type: 'text', text: msg1 },
@@ -227,7 +241,7 @@ async function autoClose(groupId) {
   const session = getSession(groupId);
   session.isOpen = false;
   session.deadlineTimer = null;
-  const msgs = buildSummaryMessages(session, groupId, new Date());
+  const msgs = buildSummaryMessages(session, groupId);
   try {
     await pushMessage(groupId, msgs);
   } catch (e) {
@@ -237,13 +251,13 @@ async function autoClose(groupId) {
 
 // ===== 解析結單時間 =====
 function parseDeadlineTime(timeStr) {
-  // 支援 "11:30" 或 "11:30結單"
   const match = timeStr.replace('結單', '').trim().match(/^(\d{1,2}):(\d{2})$/);
   if (!match) return null;
   const h = parseInt(match[1]);
   const m = parseInt(match[2]);
   if (h < 0 || h > 23 || m < 0 || m > 59) return null;
-  const deadline = new Date();
+  const now = getTaiwanTime();
+  const deadline = new Date(now);
   deadline.setHours(h, m, 0, 0);
   return deadline;
 }
@@ -263,31 +277,67 @@ async function handleMessage(event) {
 
   const session = getSession(groupId);
   const depts = getDeptSettings(groupId);
+  const pendingDepts = getPendingDeptSettings(groupId);
 
-  // ── 設定科室 ──
-  if (text.startsWith('設定科室')) {
+  // ── 設定科室（自己）──
+  if (text.startsWith('設定科室') && !text.match(/設定科室\s+\S+\s+\S+/)) {
     const dept = text.replace('設定科室', '').trim();
     if (!dept) {
       await replyMessage(replyToken, { type: 'text', text: '請輸入科室名稱，例：設定科室 行政部' });
       return;
     }
     depts[userId] = dept;
+    // 如果訂單裡有此人，同步更新
+    if (session.orders[userId]) session.orders[userId].dept = dept;
     const name = await getMemberName(groupId, userId);
-    await replyMessage(replyToken, { type: 'text', text: `✅ 已設定 ${name} 的科室為「${dept}」` });
+    await replyMessage(replyToken, { type: 'text', text: `已設定 ${name} 的科室為「${dept}」` });
     return;
+  }
+
+  // ── 幫別人設定科室（名字是科室）──
+  const deptByNameMatch1 = text.match(/^(\S+)是(\S+)$/);
+  if (deptByNameMatch1) {
+    const targetName = deptByNameMatch1[1].trim();
+    const dept = deptByNameMatch1[2].trim();
+    pendingDepts[targetName] = dept;
+    await replyMessage(replyToken, { type: 'text', text: `已預設「${targetName}」的科室為「${dept}」\n等 ${targetName} 點餐後自動綁定！` });
+    return;
+  }
+
+  // ── 幫別人設定科室（名字 科室，只在未開單時生效）──
+  if (!session.isOpen) {
+    const deptByNameMatch2 = text.match(/^(\S+)\s+(\S+)$/);
+    if (deptByNameMatch2) {
+      const targetName = deptByNameMatch2[1].trim();
+      const dept = deptByNameMatch2[2].trim();
+      // 排除指令關鍵字
+      const keywords = ['開單', '結單', '說明', '開始訂餐', '開始點餐', '查看訂單', '目前訂單', '我的訂單', '取消全部', '科室設定', '查看科室'];
+      if (!keywords.includes(targetName)) {
+        pendingDepts[targetName] = dept;
+        await replyMessage(replyToken, { type: 'text', text: `已預設「${targetName}」的科室為「${dept}」\n等 ${targetName} 點餐後自動綁定！` });
+        return;
+      }
+    }
   }
 
   // ── 查看科室設定 ──
   if (text === '科室設定' || text === '查看科室') {
     const entries = Object.entries(depts);
-    if (entries.length === 0) {
+    const pendingEntries = Object.entries(pendingDepts);
+    if (entries.length === 0 && pendingEntries.length === 0) {
       await replyMessage(replyToken, { type: 'text', text: '目前沒有任何科室設定。\n請輸入「設定科室 你的部門」' });
       return;
     }
-    let msg = '🏢 目前科室設定：\n';
+    let msg = '目前科室設定：\n';
     for (const [uid, dept] of entries) {
       const name = await getMemberName(groupId, uid);
       msg += `  ${name} → ${dept}\n`;
+    }
+    if (pendingEntries.length > 0) {
+      msg += '\n待綁定（點餐後自動對應）：\n';
+      for (const [name, dept] of pendingEntries) {
+        msg += `  ${name} → ${dept}\n`;
+      }
     }
     await replyMessage(replyToken, { type: 'text', text: msg });
     return;
@@ -295,41 +345,39 @@ async function handleMessage(event) {
 
   // ── 說明 ──
   if (['說明', 'help', '？', '?'].includes(text.toLowerCase())) {
-    const help = `🍔 訂餐機器人指令說明
-═══════════════════
-📌 開單
+    const help = `訂餐機器人指令說明
+
+開單
   開單 11:30
   開始訂餐 11:30
-  （不附時間則手動結單）
 
-🛒 點餐（開單後直接輸入）
+點餐（開單後直接輸入）
   雞腿便當 80
   雞腿便當（少冰）80
   雞腿便當 備註 少冰 80
 
-✏️ 修改
+修改
   取消 雞腿便當
   取消全部
   雞腿便當改60元
   雞腿便當改2份
-  全部加5
-  全部減5
+  全部加5 / 全部減5
   全部打9折
 
-👀 查看
+查看
   我的訂單
   目前訂單
 
-🔚 結單
+結單
   結單
   11:30結單
 
-🏢 科室
+科室設定
   設定科室 行政部
-  查看科室
+  阿明是行政部
+  阿明 行政部（未開單時）
 
-💬 開單期間 # 開頭不記錄
-  #今天吃什麼？`;
+開單期間 # 開頭不記錄`;
     await replyMessage(replyToken, { type: 'text', text: help });
     return;
   }
@@ -338,13 +386,9 @@ async function handleMessage(event) {
   const openKeywords = ['開單', '開始訂餐', '開始點餐'];
   const isOpenCmd = openKeywords.some(k => text.startsWith(k));
   if (isOpenCmd) {
-    // 取出時間部分
     let timeStr = text;
-    for (const k of openKeywords) {
-      timeStr = timeStr.replace(k, '').trim();
-    }
+    for (const k of openKeywords) timeStr = timeStr.replace(k, '').trim();
 
-    // 清除上一輪
     if (session.deadlineTimer) {
       clearTimeout(session.deadlineTimer);
       session.deadlineTimer = null;
@@ -354,45 +398,45 @@ async function handleMessage(event) {
     session.orders = {};
     session.deadline = null;
 
-    let replyText = '✅ 訂餐開始！\n\n直接輸入餐點名稱即可點餐！\n加備註：雞腿便當（少冰）80\n輸入「說明」查看所有指令。';
+    let replyText = '訂餐開始！\n\n直接輸入餐點名稱即可點餐！\n加備註：雞腿便當（少冰）80';
 
     if (timeStr) {
       const deadline = parseDeadlineTime(timeStr);
       if (!deadline) {
-        await replyMessage(replyToken, { type: 'text', text: '❌ 時間格式錯誤，請輸入如：開單 11:30' });
+        await replyMessage(replyToken, { type: 'text', text: '時間格式錯誤，請輸入如：開單 11:30' });
         return;
       }
       const msUntil = deadline - Date.now();
       if (msUntil <= 0) {
-        await replyMessage(replyToken, { type: 'text', text: '❌ 結單時間已過，請重新輸入！' });
+        await replyMessage(replyToken, { type: 'text', text: '結單時間已過，請重新輸入！' });
         return;
       }
       session.deadline = deadline;
       session.deadlineTimer = setTimeout(() => autoClose(groupId), msUntil);
-      replyText = `✅ 訂餐開始！⏰ 將於 ${formatTime(deadline)} 自動結單\n\n直接輸入餐點名稱即可點餐！\n加備註：雞腿便當（少冰）80\n輸入「說明」查看所有指令。`;
+      replyText = `訂餐開始！將於 ${formatTime(deadline)} 自動結單\n\n直接輸入餐點名稱即可點餐！\n加備註：雞腿便當（少冰）80`;
     }
 
     await replyMessage(replyToken, { type: 'text', text: replyText });
     return;
   }
 
-  // ── 單獨設定結單時間 EX: 11:30結單 ──
+  // ── 單獨設定結單時間 ──
   const timeOnlyMatch = text.match(/^(\d{1,2}:\d{2})結單$/);
   if (timeOnlyMatch) {
     const deadline = parseDeadlineTime(timeOnlyMatch[1]);
     if (!deadline) {
-      await replyMessage(replyToken, { type: 'text', text: '❌ 時間格式錯誤，請輸入如：11:30結單' });
+      await replyMessage(replyToken, { type: 'text', text: '時間格式錯誤，請輸入如：11:30結單' });
       return;
     }
     const msUntil = deadline - Date.now();
     if (msUntil <= 0) {
-      await replyMessage(replyToken, { type: 'text', text: '❌ 結單時間已過，請重新輸入！' });
+      await replyMessage(replyToken, { type: 'text', text: '結單時間已過，請重新輸入！' });
       return;
     }
     if (session.deadlineTimer) clearTimeout(session.deadlineTimer);
     session.deadline = deadline;
     session.deadlineTimer = setTimeout(() => autoClose(groupId), msUntil);
-    await replyMessage(replyToken, { type: 'text', text: `✅ 已設定結單時間：${formatTime(deadline)}` });
+    await replyMessage(replyToken, { type: 'text', text: `已設定結單時間：${formatTime(deadline)}` });
     return;
   }
 
@@ -403,26 +447,25 @@ async function handleMessage(event) {
       session.deadlineTimer = null;
     }
     session.isOpen = false;
-    const msgs = buildSummaryMessages(session, groupId, new Date());
+    const msgs = buildSummaryMessages(session, groupId);
     await replyMessage(replyToken, msgs);
     return;
   }
 
   // ── 查看目前訂單 ──
   if (text === '目前訂單' || text === '查看訂單') {
-    const orders = session.orders;
-    const userIds = Object.keys(orders).filter(uid => orders[uid].items.length > 0);
-    if (userIds.length === 0) {
+    const orderUserIds = Object.keys(session.orders).filter(uid => session.orders[uid].items.length > 0);
+    if (orderUserIds.length === 0) {
       await replyMessage(replyToken, { type: 'text', text: '目前還沒有人點餐！' });
       return;
     }
-    const status = session.isOpen ? '📂 收單中' : '🔒 已結單';
-    const deadlineStr = session.deadline ? `　⏰ 結單：${formatTime(session.deadline)}` : '';
-    let msg = `${status}${deadlineStr}\n\n📋 目前訂單\n─────────────\n`;
+    const status = session.isOpen ? '收單中' : '已結單';
+    const deadlineStr = session.deadline ? `　結單：${formatTime(session.deadline)}` : '';
+    let msg = `${status}${deadlineStr}\n\n目前訂單\n`;
     let total = 0;
     let totalQty = 0;
-    for (const uid of userIds) {
-      const o = orders[uid];
+    for (const uid of orderUserIds) {
+      const o = session.orders[uid];
       const itemStrs = o.items.map(item => {
         const qtyStr = item.qty > 1 ? ` x${item.qty}` : '';
         const noteStr = item.note ? `（${item.note}）` : '';
@@ -434,7 +477,7 @@ async function handleMessage(event) {
       total += personTotal;
       totalQty += o.items.reduce((s, i) => s + i.qty, 0);
     }
-    msg += `─────────────\n👥 共 ${userIds.length} 人，${totalQty} 份\n💰 目前總金額：$${total}`;
+    msg += `\n共 ${orderUserIds.length} 人，${totalQty} 份\n總金額：$${total}`;
     await replyMessage(replyToken, { type: 'text', text: msg });
     return;
   }
@@ -446,7 +489,7 @@ async function handleMessage(event) {
       await replyMessage(replyToken, { type: 'text', text: '你還沒有點餐喔！' });
       return;
     }
-    let msg = `📋 ${o.name} 的訂單：\n`;
+    let msg = `${o.name} 的訂單：\n`;
     let total = 0;
     o.items.forEach((item, i) => {
       const qtyStr = item.qty > 1 ? ` x${item.qty}` : '';
@@ -460,7 +503,7 @@ async function handleMessage(event) {
     return;
   }
 
-  // ── 以下指令只在開單期間有效 ──
+  // ── 以下只在開單期間有效 ──
   if (!session.isOpen) return;
 
   // ── # 開頭不記錄 ──
@@ -471,7 +514,7 @@ async function handleMessage(event) {
     if (session.orders[userId]) {
       session.orders[userId].items = [];
       const name = session.orders[userId].name;
-      await replyMessage(replyToken, { type: 'text', text: `✅ 已取消 ${name} 的所有訂單。` });
+      await replyMessage(replyToken, { type: 'text', text: `已取消 ${name} 的所有訂單。` });
     }
     return;
   }
@@ -483,15 +526,15 @@ async function handleMessage(event) {
     if (!o || o.items.length === 0) return;
     const idx = o.items.findIndex(i => i.name === itemName || i.name.includes(itemName));
     if (idx === -1) {
-      await replyMessage(replyToken, { type: 'text', text: `❌ 找不到「${itemName}」，請輸入「我的訂單」確認品項名稱。` });
+      await replyMessage(replyToken, { type: 'text', text: `找不到「${itemName}」，請輸入「我的訂單」確認品項名稱。` });
       return;
     }
     o.items.splice(idx, 1);
-    await replyMessage(replyToken, { type: 'text', text: `✅ 已取消：${itemName}` });
+    await replyMessage(replyToken, { type: 'text', text: `已取消：${itemName}` });
     return;
   }
 
-  // ── 修改價格 EX: 雞腿便當改60元 ──
+  // ── 修改價格 ──
   const priceChangeMatch = text.match(/^(.+?)改(\d+)元$/);
   if (priceChangeMatch) {
     const itemName = priceChangeMatch[1].trim();
@@ -500,16 +543,16 @@ async function handleMessage(event) {
     if (!o) return;
     const items = o.items.filter(i => i.name === itemName || i.name.includes(itemName));
     if (items.length === 0) {
-      await replyMessage(replyToken, { type: 'text', text: `❌ 找不到「${itemName}」，請輸入「我的訂單」確認品項名稱。` });
+      await replyMessage(replyToken, { type: 'text', text: `找不到「${itemName}」，請輸入「我的訂單」確認品項名稱。` });
       return;
     }
     const oldPrice = items[0].price;
     items.forEach(i => i.price = newPrice);
-    await replyMessage(replyToken, { type: 'text', text: `✅ 已更新價格：${itemName} $${oldPrice ?? 0} → $${newPrice}` });
+    await replyMessage(replyToken, { type: 'text', text: `已更新價格：${itemName} $${oldPrice ?? 0} → $${newPrice}` });
     return;
   }
 
-  // ── 修改數量 EX: 雞腿便當改2份 ──
+  // ── 修改數量 ──
   const qtyUnits = ['個', '份', '盒', '杯'];
   const qtyPattern = new RegExp(`^(.+?)改(\\d+)(${qtyUnits.join('|')})$`);
   const qtyChangeMatch = text.match(qtyPattern);
@@ -520,16 +563,16 @@ async function handleMessage(event) {
     if (!o) return;
     const items = o.items.filter(i => i.name === itemName || i.name.includes(itemName));
     if (items.length === 0) {
-      await replyMessage(replyToken, { type: 'text', text: `❌ 找不到「${itemName}」，請輸入「我的訂單」確認品項名稱。` });
+      await replyMessage(replyToken, { type: 'text', text: `找不到「${itemName}」，請輸入「我的訂單」確認品項名稱。` });
       return;
     }
     const oldQty = items[0].qty;
     items.forEach(i => i.qty = newQty);
-    await replyMessage(replyToken, { type: 'text', text: `✅ 已更新數量：${itemName} ${oldQty}份 → ${newQty}份` });
+    await replyMessage(replyToken, { type: 'text', text: `已更新數量：${itemName} ${oldQty}份 → ${newQty}份` });
     return;
   }
 
-  // ── 全部加價 / 減價 ──
+  // ── 全部加減價 ──
   const allPriceMatch = text.match(/^全部(加|減)(\d+)$/);
   if (allPriceMatch) {
     const op = allPriceMatch[1];
@@ -541,7 +584,7 @@ async function handleMessage(event) {
         }
       }
     }
-    await replyMessage(replyToken, { type: 'text', text: `✅ 已全部${op}價 $${amount}！\n輸入「目前訂單」查看更新後結果。` });
+    await replyMessage(replyToken, { type: 'text', text: `已全部${op}價 $${amount}！\n輸入「目前訂單」查看更新後結果。` });
     return;
   }
 
@@ -550,7 +593,7 @@ async function handleMessage(event) {
   if (discountMatch) {
     const discount = parseFloat(discountMatch[1]) / 10;
     if (discount <= 0 || discount > 1) {
-      await replyMessage(replyToken, { type: 'text', text: '❌ 折扣格式錯誤，例：全部打9折、全部打8.5折' });
+      await replyMessage(replyToken, { type: 'text', text: '折扣格式錯誤，例：全部打9折、全部打8.5折' });
       return;
     }
     for (const uid of Object.keys(session.orders)) {
@@ -560,32 +603,30 @@ async function handleMessage(event) {
         }
       }
     }
-    await replyMessage(replyToken, { type: 'text', text: `✅ 已套用 ${discountMatch[1]} 折（小數點四捨五入）！\n輸入「目前訂單」查看更新後結果。` });
+    await replyMessage(replyToken, { type: 'text', text: `已套用 ${discountMatch[1]} 折（小數點四捨五入）！\n輸入「目前訂單」查看更新後結果。` });
     return;
   }
 
   // ── 點餐 ──
   const { itemName, price, note } = parseOrderText(text);
-
   if (!itemName) return;
 
   const name = await getMemberName(groupId, userId);
+
   if (!session.orders[userId]) {
-    session.orders[userId] = {
-      name,
-      dept: depts[userId] || null,
-      items: []
-    };
+    session.orders[userId] = { name, dept: depts[userId] || null, items: [] };
   }
   session.orders[userId].name = name;
-  session.orders[userId].dept = depts[userId] || null;
 
-  session.orders[userId].items.push({
-    name: itemName,
-    price: price,
-    note: note,
-    qty: 1
-  });
+  // 檢查是否有待綁定的科室設定
+  if (!depts[userId] && pendingDepts[name]) {
+    depts[userId] = pendingDepts[name];
+    session.orders[userId].dept = depts[userId];
+    delete pendingDepts[name];
+  }
+
+  session.orders[userId].dept = depts[userId] || null;
+  session.orders[userId].items.push({ name: itemName, price, note, qty: 1 });
 
   // 靜默記錄，不回應
 }
@@ -600,7 +641,7 @@ async function handleMemberJoin(event) {
       try {
         await pushMessage(groupId, {
           type: 'text',
-          text: `👋 歡迎 ${name} 加入！\n請輸入「設定科室 你的部門」完成設定\n例：設定科室 行政部`
+          text: `歡迎 ${name} 加入！\n請輸入「設定科室 你的部門」完成設定\n例：設定科室 行政部`
         });
       } catch (e) {
         console.error('Member join push error:', e.message);
@@ -633,7 +674,7 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-app.get('/', (req, res) => res.send('LINE 訂餐機器人運作中 🍔'));
+app.get('/', (req, res) => res.send('LINE 訂餐機器人運作中'));
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
