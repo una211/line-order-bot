@@ -113,8 +113,9 @@ function parseOrderText(text) {
     note = noteKeywordMatch[2].trim();
   }
 
-  // 抓「價格*數量」格式：雞腿便當80*2 或 雞腿便當80×2 或 雞腿便當80x2 或 雞腿便當80X2
-  const priceQtyMatch = itemName.match(/^(.+?)(\d+)[*×xX](\d+)$/);
+  // 抓「價格*數量」格式，支援空格：
+  // 雞腿便當80*2、雞腿便當 80*2、雞腿便當80 *2、雞腿便當 80 *2
+  const priceQtyMatch = itemName.match(/^(.+?)\s*(\d+)\s*[*×xX]\s*(\d+)$/);
   if (priceQtyMatch) {
     itemName = priceQtyMatch[1].trim();
     price = parseInt(priceQtyMatch[2]);
