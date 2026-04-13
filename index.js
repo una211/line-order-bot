@@ -191,7 +191,7 @@ function buildSummaryMessages(session, groupId) {
     grandTotal += deptTotal;
     msg1 += `\n${dept}　小計 $${deptTotal}\n`;
     for (const [itemName, data] of Object.entries(itemMap)) {
-      const priceStr = data.price !== null ? `${data.price}` : '0';
+      const priceStr = data.price !== null ? `${data.price}` : '';
       const names = data.names.join('、');
       msg1 += `  ${itemName}${priceStr}×${data.qty}（${names}）\n`;
       grandQty += data.qty;
@@ -408,7 +408,7 @@ async function handleMessage(event) {
     session.orders = {};
     session.deadline = null;
 
-    let replyText = '訂餐開始！\n\n直接輸入餐點名稱即可點餐！\n加備註：雞腿便當（少冰）80';
+    let replyText = '開始點餐！\n直接輸入餐點即可點餐！\nEX：雞腿便當（飯換菜）80';
 
     if (timeStr) {
       const deadline = parseDeadlineTime(timeStr);
@@ -423,7 +423,7 @@ async function handleMessage(event) {
       }
       session.deadline = deadline;
       session.deadlineTimer = setTimeout(() => autoClose(groupId), msUntil);
-      replyText = `訂餐開始！將於 ${formatTime(deadline)} 自動結單\n\n直接輸入餐點名稱即可點餐！\n加備註：雞腿便當（少冰）80`;
+      replyText = `開始點餐！將於 ${formatTime(deadline)} 自動結單\n直接輸入餐點即可點餐！\nEX：雞腿便當（飯換菜）80`;
     }
 
     await replyMessage(replyToken, { type: 'text', text: replyText });
@@ -638,7 +638,14 @@ async function handleMessage(event) {
   session.orders[userId].dept = depts[userId] || null;
   session.orders[userId].items.push({ name: itemName, price, note, qty });
 
-  // 靜默記錄，不回應
+  // 回覆確認
+  const priceStr = price !== null ? ` $${price * qty}` : '';
+  const qtyStr = qty > 1 ? ` x${qty}` : '';
+  const noteStr = note ? `（${note}）` : '';
+  await replyMessage(replyToken, {
+    type: 'text',
+    text: `✅ ${name} 點了：${itemName}${noteStr}${qtyStr}${priceStr}`
+  });
 }
 
 // ===== 新成員加入提醒 =====
