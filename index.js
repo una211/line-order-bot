@@ -168,7 +168,8 @@ function buildSummaryMessages(session, groupId) {
 
   for (const uid of userIds) {
     const o = orders[uid];
-    const dept = depts[uid] || null;
+    // 優先從deptSettings取科室，確保設定代號後科室仍正確
+    const dept = depts[uid] || o.dept || null;
     if (dept) {
       if (!deptMap[dept]) deptMap[dept] = [];
       deptMap[dept].push({ uid, name: o.name, items: o.items });
@@ -357,7 +358,7 @@ async function handleMessage(event) {
       return;
     }
     depts[userId] = dept;
-    // 如果訂單裡有此人，同步更新
+    // 同步更新訂單裡的科室（不管有沒有設定代號都用userId綁定）
     if (session.orders[userId]) session.orders[userId].dept = dept;
     const name = await getMemberName(groupId, userId);
     await replyMessage(replyToken, { type: 'text', text: `已設定 ${name} 的科室為「${dept}」` });
@@ -419,35 +420,57 @@ async function handleMessage(event) {
 
 開單
   開單 11:30
+  開始點餐 11:30
   開始訂餐 11:30
+  （不附時間則手動結單）
 
 點餐（開單後直接輸入）
   雞腿便當 80
+  雞腿便當80*2
+  雞腿便當$80*2
   雞腿便當（少冰）80
   雞腿便當 備註 少冰 80
+  （開單期間 # 開頭不記錄）
+
+取消
+  取消豬排
+  取消 豬排
+  取消 豬排 2（取消2份）
+  取消全部
 
 修改
-  取消 雞腿便當
-  取消全部
-  雞腿便當改60元
-  雞腿便當改2份
+  雞腿便當改60元（改價格）
+  雞腿便當改2份（改數量）
   全部加5 / 全部減5
   全部打9折
 
-查看
+查看個人訂單
   我的訂單
+  我的餐點
+
+查看全部訂單
+  所有訂單
   目前訂單
+  查看訂單
+  所有的訂單
+  現在的訂單
+  全部的訂單
 
 結單
   結單
   11:30結單
 
 科室設定
-  設定科室 行政部
-  阿明是行政部
+  設定科室 行政部（自己）
+  阿明是行政部（幫別人設定）
   阿明 行政部（未開單時）
+  查看科室
 
-開單期間 # 開頭不記錄`;
+代號設定
+  我的代號 小明
+  設定代號 小明
+  設定代號 很長的LINE名稱 小明（幫別人設定）
+  查看代號`;
     await replyMessage(replyToken, { type: 'text', text: help });
     return;
   }
@@ -753,6 +776,7 @@ async function handleMessage(event) {
     delete pendingDepts[name];
   }
 
+  // 每次點餐都重新確認科室（確保設定代號後科室仍正確）
   session.orders[userId].dept = depts[userId] || null;
   session.orders[userId].items.push({ name: itemName, price, note, qty });
 
