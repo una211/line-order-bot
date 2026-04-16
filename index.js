@@ -14,7 +14,9 @@ const ALLOWED_GROUP_IDS = process.env.ALLOWED_GROUP_IDS
 // ===== 資料儲存 =====
 const sessions = {};
 const deptSettings = {};
-const pendingDeptSettings = {}; // { groupId: { name: dept } } 等待綁定的科室設定
+const pendingDeptSettings = {};
+const nicknameSettings = {};
+const pendingNicknameSettings = {};
 
 // ===== 台灣時間 =====
 function getTaiwanTime() {
@@ -55,6 +57,10 @@ async function pushMessage(to, messages) {
 }
 
 async function getMemberName(groupId, userId) {
+  // 優先使用暱稱
+  if (nicknameSettings[groupId] && nicknameSettings[groupId][userId]) {
+    return nicknameSettings[groupId][userId];
+  }
   try {
     const url = groupId
       ? `https://api.line.me/v2/bot/group/${groupId}/member/${userId}`
@@ -66,6 +72,16 @@ async function getMemberName(groupId, userId) {
   } catch {
     return '某位同事';
   }
+}
+
+function getNicknameSettings(groupId) {
+  if (!nicknameSettings[groupId]) nicknameSettings[groupId] = {};
+  return nicknameSettings[groupId];
+}
+
+function getPendingNicknameSettings(groupId) {
+  if (!pendingNicknameSettings[groupId]) pendingNicknameSettings[groupId] = {};
+  return pendingNicknameSettings[groupId];
 }
 
 // ===== 工具函式 =====
@@ -113,9 +129,9 @@ function parseOrderText(text) {
     note = noteKeywordMatch[2].trim();
   }
 
-  // 抓「價格*數量」格式，支援空格：
-  // 雞腿便當80*2、雞腿便當 80*2、雞腿便當80 *2、雞腿便當 80 *2
-  const priceQtyMatch = itemName.match(/^(.+?)\s*(\d+)\s*[*×xX]\s*(\d+)$/);
+  // 抓「價格*數量」格式，支援空格與$符號：
+  // 雞腿便當80*2、雞腿便當 80*2、雞腿便當$80*2、麵線$50*1、排骨飯 60 *1
+  const priceQtyMatch = itemName.match(/^(.+?)\s*\$?(\d+)\s*[*×xX]\s*(\d+)$/);
   if (priceQtyMatch) {
     itemName = priceQtyMatch[1].trim();
     price = parseInt(priceQtyMatch[2]);
@@ -123,8 +139,10 @@ function parseOrderText(text) {
     return { itemName, price, note, qty };
   }
 
-  // 抓價格（空格後接數字）
-  const priceMatch = itemName.match(/^(.+?)\s+\$?(\d+)$/);
+  // 抓價格（支援空格或$符號後接數字）
+  // 麵線$50、麵線 50、麵線 $50
+  const priceMatch = itemName.match(/^(.+?)\s*\$(\d+)$/) ||
+                     itemName.match(/^(.+?)\s+\$?(\d+)$/);
   if (priceMatch) {
     itemName = priceMatch[1].trim();
     price = parseInt(priceMatch[2]);
@@ -289,6 +307,47 @@ async function handleMessage(event) {
   const session = getSession(groupId);
   const depts = getDeptSettings(groupId);
   const pendingDepts = getPendingDeptSettings(groupId);
+  const nicknames = getNicknameSettings(groupId);
+  const pendingNicknames = getPendingNicknameSettings(groupId);
+
+  // ── 設定暱稱（自己）──
+  if (text.startsWith('我的暱稱') || text.startsWith('設定暱稱') || text.startsWith('我的代號') || text.startsWith('設定代號')) {
+    const nickname = text.replace(/^(我的暱稱|設定暱稱|我的代號|設定代號)\s*/, '').trim();
+    if (!nickname) {
+      await replyMessage(replyToken, { type: 'text', text: '請輸入暱稱，例：我的暱稱 小明 或 我的代號 小明' });
+      return;
+    }
+    nicknames[userId] = nickname;
+    if (session.orders[userId]) session.orders[userId].name = nickname;
+    await replyMessage(replyToken, { type: 'text', text: `已設定你的暱稱為「${nickname}」` });
+    return;
+  }
+
+  // ── 幫別人設定暱稱（管理者）──
+  // 格式：設定暱稱 LINE名稱 暱稱
+  const setNicknameMatch = text.match(/^(設定暱稱|設定代號)\s+(\S+)\s+(\S+)$/);
+  if (setNicknameMatch) {
+    const lineName = setNicknameMatch[1].trim();
+    const nickname = setNicknameMatch[2].trim();
+    pendingNicknames[lineName] = nickname;
+    await replyMessage(replyToken, { type: 'text', text: `已預設「${lineName}」的暱稱為「${nickname}」\n等 ${lineName} 點餐後自動綁定！` });
+    return;
+  }
+
+  // ── 查看暱稱設定 ──
+  if (text === '暱稱設定' || text === '查看暱稱' || text === '代號設定' || text === '查看代號') {
+    const entries = Object.entries(nicknames);
+    if (entries.length === 0) {
+      await replyMessage(replyToken, { type: 'text', text: '目前沒有任何暱稱設定。\n請輸入「我的暱稱 你的暱稱」' });
+      return;
+    }
+    let msg = '目前暱稱設定：\n';
+    for (const [uid, nick] of entries) {
+      msg += `  ${nick}\n`;
+    }
+    await replyMessage(replyToken, { type: 'text', text: msg });
+    return;
+  }
 
   // ── 設定科室（自己）──
   if (text.startsWith('設定科室') && !text.match(/設定科室\s+\S+\s+\S+/)) {
@@ -394,11 +453,17 @@ async function handleMessage(event) {
   }
 
   // ── 開單 ──
-  const openKeywords = ['開單', '開始訂餐', '開始點餐'];
+  const openKeywords = ['開始點餐', '開始訂餐', '開單'];
   const isOpenCmd = openKeywords.some(k => text.startsWith(k));
   if (isOpenCmd) {
+    // 移除關鍵字，取得剩餘部分（時間）
     let timeStr = text;
-    for (const k of openKeywords) timeStr = timeStr.replace(k, '').trim();
+    for (const k of openKeywords) {
+      if (timeStr.startsWith(k)) {
+        timeStr = timeStr.slice(k.length).trim();
+        break;
+      }
+    }
 
     if (session.deadlineTimer) {
       clearTimeout(session.deadlineTimer);
@@ -414,7 +479,7 @@ async function handleMessage(event) {
     if (timeStr) {
       const deadline = parseDeadlineTime(timeStr);
       if (!deadline) {
-        await replyMessage(replyToken, { type: 'text', text: '時間格式錯誤，請輸入如：開單 11:30' });
+        await replyMessage(replyToken, { type: 'text', text: '時間格式錯誤，請輸入如：開單 11:30 或 開單11:30' });
         return;
       }
       const msUntil = deadline - Date.now();
@@ -464,7 +529,7 @@ async function handleMessage(event) {
   }
 
   // ── 查看目前訂單 ──
-  if (text === '目前訂單' || text === '查看訂單') {
+  if (['目前訂單', '查看訂單', '所有的訂單', '現在的訂單', '全部的訂單', '所有訂單'].includes(text)) {
     const orderUserIds = Object.keys(session.orders).filter(uid => session.orders[uid].items.length > 0);
     if (orderUserIds.length === 0) {
       await replyMessage(replyToken, { type: 'text', text: '目前還沒有人點餐！' });
@@ -478,10 +543,10 @@ async function handleMessage(event) {
     for (const uid of orderUserIds) {
       const o = session.orders[uid];
       const itemStrs = o.items.map(item => {
-        const qtyStr = item.qty > 1 ? ` x${item.qty}` : '';
+        const priceStr = item.price !== null ? `${item.price}` : '';
+        const qtyStr = `×${item.qty}`;
         const noteStr = item.note ? `（${item.note}）` : '';
-        const priceStr = item.price !== null ? ` $${item.price * item.qty}` : ' $0';
-        return `${item.name}${qtyStr}${noteStr}${priceStr}`;
+        return `${item.name}${priceStr}${qtyStr}${noteStr}`;
       });
       const personTotal = o.items.reduce((s, i) => s + (i.price !== null ? i.price * i.qty : 0), 0);
       msg += `  ${o.name}：${itemStrs.join('、')}　小計 $${personTotal}\n`;
@@ -493,8 +558,37 @@ async function handleMessage(event) {
     return;
   }
 
+  // ── 所有訂單（任何時候都可以查看）──
+  if (text === '所有訂單' || text === '所有的訂單' || text === '全部的訂單') {
+    const orderUserIds2 = Object.keys(session.orders).filter(uid => session.orders[uid].items.length > 0);
+    if (orderUserIds2.length === 0) {
+      await replyMessage(replyToken, { type: 'text', text: '目前還沒有任何訂單！' });
+      return;
+    }
+    const status2 = session.isOpen ? '收單中' : '已結單';
+    let msg = `${status2}\n\n全部訂單\n`;
+    let total2 = 0;
+    let totalQty2 = 0;
+    for (const uid of orderUserIds2) {
+      const o = session.orders[uid];
+      const itemStrs = o.items.map(item => {
+        const priceStr = item.price !== null ? `${item.price}` : '';
+        const qtyStr = `×${item.qty}`;
+        const noteStr = item.note ? `（${item.note}）` : '';
+        return `${item.name}${priceStr}${qtyStr}${noteStr}`;
+      });
+      const personTotal = o.items.reduce((s, i) => s + (i.price !== null ? i.price * i.qty : 0), 0);
+      msg += `  ${o.name}：${itemStrs.join('、')}　小計 $${personTotal}\n`;
+      total2 += personTotal;
+      totalQty2 += o.items.reduce((s, i) => s + i.qty, 0);
+    }
+    msg += `\n共 ${orderUserIds2.length} 人，${totalQty2} 份\n總金額：$${total2}`;
+    await replyMessage(replyToken, { type: 'text', text: msg });
+    return;
+  }
+
   // ── 我的訂單 ──
-  if (text === '我的訂單') {
+  if (text === '我的訂單' || text === '我的餐點') {
     const o = session.orders[userId];
     if (!o || o.items.length === 0) {
       await replyMessage(replyToken, { type: 'text', text: '你還沒有點餐喔！' });
@@ -503,10 +597,10 @@ async function handleMessage(event) {
     let msg = `${o.name} 的訂單：\n`;
     let total = 0;
     o.items.forEach((item, i) => {
-      const qtyStr = item.qty > 1 ? ` x${item.qty}` : '';
+      const priceStr = item.price !== null ? `${item.price}` : '';
+      const qtyStr = `×${item.qty}`;
       const noteStr = item.note ? `（${item.note}）` : '';
-      const priceStr = item.price !== null ? ` $${item.price * item.qty}` : ' $0';
-      msg += `  ${i + 1}. ${item.name}${qtyStr}${noteStr}${priceStr}\n`;
+      msg += `  ${i + 1}. ${item.name}${priceStr}${qtyStr}${noteStr}\n`;
       total += item.price !== null ? item.price * item.qty : 0;
     });
     msg += `小計：$${total}`;
@@ -530,18 +624,33 @@ async function handleMessage(event) {
     return;
   }
 
-  // ── 取消單筆 ──
-  if (text.startsWith('取消 ')) {
-    const itemName = text.replace('取消 ', '').trim();
+  // ── 取消單筆 / 取消幾份 ──
+  // 支援：取消豬排、取消 豬排、取消豬排2、取消 豬排 2
+  const cancelMatch = text.match(/^取消\s*(.+?)(\s+(\d+))?$/);
+  if (cancelMatch && !text.startsWith('取消全部')) {
+    const itemName = cancelMatch[1].trim();
+    const cancelQty = cancelMatch[3] ? parseInt(cancelMatch[3]) : null;
     const o = session.orders[userId];
     if (!o || o.items.length === 0) return;
+
     const idx = o.items.findIndex(i => i.name === itemName || i.name.includes(itemName));
     if (idx === -1) {
       await replyMessage(replyToken, { type: 'text', text: `找不到「${itemName}」，請輸入「我的訂單」確認品項名稱。` });
       return;
     }
-    o.items.splice(idx, 1);
-    await replyMessage(replyToken, { type: 'text', text: `已取消：${itemName}` });
+
+    const item = o.items[idx];
+
+    if (cancelQty === null || cancelQty >= item.qty) {
+      // 取消全部該品項
+      o.items.splice(idx, 1);
+      await replyMessage(replyToken, { type: 'text', text: `已取消：${itemName}` });
+    } else {
+      // 取消指定份數
+      const remaining = item.qty - cancelQty;
+      item.qty = remaining;
+      await replyMessage(replyToken, { type: 'text', text: `已取消 ${itemName} ${cancelQty} 份\n目前訂單：${itemName}${item.price ?? ''}×${remaining}` });
+    }
     return;
   }
 
@@ -628,6 +737,14 @@ async function handleMessage(event) {
     session.orders[userId] = { name, dept: depts[userId] || null, items: [] };
   }
   session.orders[userId].name = name;
+
+  // 檢查是否有待綁定的暱稱設定
+  if (!nicknames[userId] && pendingNicknames[name]) {
+    nicknames[userId] = pendingNicknames[name];
+    session.orders[userId].name = nicknames[userId];
+    delete pendingNicknames[name];
+    name = nicknames[userId];
+  }
 
   // 檢查是否有待綁定的科室設定
   if (!depts[userId] && pendingDepts[name]) {
