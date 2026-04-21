@@ -266,6 +266,74 @@ function buildSummaryMessages(session, groupId) {
   ];
 }
 
+// ===== 便條紙樣式（依科室分裝）=====
+function buildSlipMessages(session, groupId) {
+  const orders = session.orders;
+  const userIds = Object.keys(orders).filter(uid => orders[uid].items.length > 0);
+  const depts = {};
+  // 取得科室設定
+  if (deptSettings[groupId]) {
+    Object.assign(depts, deptSettings[groupId]);
+  }
+
+  if (userIds.length === 0) {
+    return [{ type: 'text', text: '目前還沒有任何訂單！' }];
+  }
+
+  const deptMap = {};
+  const noDept = [];
+
+  for (const uid of userIds) {
+    const o = orders[uid];
+    const dept = depts[uid] || o.dept || null;
+    if (dept) {
+      if (!deptMap[dept]) deptMap[dept] = [];
+      deptMap[dept].push({ name: o.name, items: o.items });
+    } else {
+      noDept.push({ name: o.name, items: o.items });
+    }
+  }
+
+  function buildDeptItemMap(members) {
+    const itemMap = {};
+    for (const m of members) {
+      for (const item of m.items) {
+        if (!itemMap[item.name]) itemMap[item.name] = { price: item.price, qty: 0 };
+        itemMap[item.name].qty += item.qty;
+        if (item.price !== null && itemMap[item.name].price === null) {
+          itemMap[item.name].price = item.price;
+        }
+      }
+    }
+    return itemMap;
+  }
+
+  let msg = '';
+  let deptIndex = 1;
+
+  for (const [dept, members] of Object.entries(deptMap)) {
+    const itemMap = buildDeptItemMap(members);
+    msg += `第${deptIndex}張單（${dept}）\n`;
+    for (const [itemName, data] of Object.entries(itemMap)) {
+      const priceStr = data.price !== null ? `${data.price}` : '';
+      msg += `${itemName}${priceStr}×${data.qty}\n`;
+    }
+    msg += '\n';
+    deptIndex++;
+  }
+
+  if (noDept.length > 0) {
+    const itemMap = buildDeptItemMap(noDept);
+    msg += `第${deptIndex}張單（未設定科室）\n`;
+    for (const [itemName, data] of Object.entries(itemMap)) {
+      const priceStr = data.price !== null ? `${data.price}` : '';
+      msg += `${itemName}${priceStr}×${data.qty}\n`;
+    }
+  }
+
+  return [{ type: 'text', text: msg.trim() }];
+}
+
 // ===== 自動結單 =====
 async function autoClose(groupId) {
   const session = getSession(groupId);
@@ -578,6 +646,13 @@ async function handleMessage(event) {
     }
     msg += `\n共 ${orderUserIds.length} 人，${totalQty} 份\n總金額：$${total}`;
     await replyMessage(replyToken, { type: 'text', text: msg });
+    return;
+  }
+
+  // ── 科室分裝便條紙 ──
+  if (text === '科室分裝' || text === '依科室分單') {
+    const slipMsgs = buildSlipMessages(session, groupId);
+    await replyMessage(replyToken, slipMsgs);
     return;
   }
 
