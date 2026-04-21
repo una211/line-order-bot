@@ -491,6 +491,77 @@ async function handleMessage(event) {
     }
   }
 
+  // ── 批次設定科室 ──
+  if (text.startsWith('批次設定科室') && !text.startsWith('批次設定科室+代號')) {
+    const lines = text.split('\n').slice(1).map(l => l.trim()).filter(Boolean);
+    if (lines.length === 0) {
+      await replyMessage(replyToken, { type: 'text', text: '請輸入名單，例：\n批次設定科室\n阿明 行政部\n大偉 業務部' });
+      return;
+    }
+    let msg = '✅ 已批次設定科室：\n';
+    let count = 0;
+    for (const line of lines) {
+      const parts = line.split(/\s+/);
+      if (parts.length < 2) continue;
+      const lineName = parts.slice(0, parts.length - 1).join(' ');
+      const dept = parts[parts.length - 1];
+      pendingDepts[lineName] = dept;
+      msg += `  ${lineName} → ${dept}\n`;
+      count++;
+    }
+    msg += `\n共 ${count} 人，等以上成員點餐後自動綁定！`;
+    await replyMessage(replyToken, { type: 'text', text: msg });
+    return;
+  }
+
+  // ── 批次設定代號 ──
+  if (text.startsWith('批次設定代號')) {
+    const lines = text.split('\n').slice(1).map(l => l.trim()).filter(Boolean);
+    if (lines.length === 0) {
+      await replyMessage(replyToken, { type: 'text', text: '請輸入名單，例：\n批次設定代號\n陳大明 小明\n王大偉 阿偉' });
+      return;
+    }
+    let msg = '✅ 已批次設定代號：\n';
+    let count = 0;
+    for (const line of lines) {
+      const parts = line.split(/\s+/);
+      if (parts.length < 2) continue;
+      const lineName = parts.slice(0, parts.length - 1).join(' ');
+      const nickname = parts[parts.length - 1];
+      pendingNicknames[lineName] = nickname;
+      msg += `  ${lineName} → ${nickname}\n`;
+      count++;
+    }
+    msg += `\n共 ${count} 人，等以上成員點餐後自動綁定！`;
+    await replyMessage(replyToken, { type: 'text', text: msg });
+    return;
+  }
+
+  // ── 批次設定科室＋代號 ──
+  if (text.startsWith('批次設定科室+代號') || text.startsWith('批次設定科室＋代號')) {
+    const lines = text.split('\n').slice(1).map(l => l.trim()).filter(Boolean);
+    if (lines.length === 0) {
+      await replyMessage(replyToken, { type: 'text', text: '請輸入名單，例：\n批次設定科室+代號\n阿明 行政部 小明\n大偉 業務部 阿偉' });
+      return;
+    }
+    let msg = '✅ 已批次設定：\n';
+    let count = 0;
+    for (const line of lines) {
+      const parts = line.split(/\s+/);
+      if (parts.length < 3) continue;
+      const nickname = parts[parts.length - 1];
+      const dept = parts[parts.length - 2];
+      const lineName = parts.slice(0, parts.length - 2).join(' ');
+      pendingDepts[lineName] = dept;
+      pendingNicknames[lineName] = nickname;
+      msg += `  ${lineName} → ${dept}，代號：${nickname}\n`;
+      count++;
+    }
+    msg += `\n共 ${count} 人，等以上成員點餐後自動綁定！`;
+    await replyMessage(replyToken, { type: 'text', text: msg });
+    return;
+  }
+
   // ── 查看科室設定 ──
   if (text === '科室設定' || text === '查看科室') {
     const entries = Object.entries(depts);
@@ -565,6 +636,19 @@ async function handleMessage(event) {
   阿明是行政部（幫別人設定）
   阿明 行政部（未開單時）
   查看科室
+
+批次設定
+  批次設定科室
+  阿明 行政部
+  大偉 業務部
+
+  批次設定代號
+  陳大明 小明
+  王大偉 阿偉
+
+  批次設定科室+代號
+  阿明 行政部 小明
+  大偉 業務部 阿偉
 
 代號設定
   我的代號 小明
