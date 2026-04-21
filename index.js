@@ -236,19 +236,21 @@ function buildSummaryMessages(session, groupId) {
 
   msg1 += `\n共 ${grandQty} 份\n總金額：$${grandTotal} 元`;
 
-  // ===== 第2則：依餐點統計 =====
+  // ===== 第2則：依餐點統計（含備註）=====
   const allItemMap = {};
   let totalQty = 0;
   let totalAmount = 0;
 
   for (const uid of userIds) {
     for (const item of orders[uid].items) {
-      if (!allItemMap[item.name]) {
-        allItemMap[item.name] = { price: item.price, qty: 0 };
+      // key 包含備註，備註不同的分開統計
+      const key = item.note ? `${item.name}（${item.note}）` : item.name;
+      if (!allItemMap[key]) {
+        allItemMap[key] = { name: item.name, note: item.note || null, price: item.price, qty: 0 };
       }
-      allItemMap[item.name].qty += item.qty;
-      if (item.price !== null && allItemMap[item.name].price === null) {
-        allItemMap[item.name].price = item.price;
+      allItemMap[key].qty += item.qty;
+      if (item.price !== null && allItemMap[key].price === null) {
+        allItemMap[key].price = item.price;
       }
       totalQty += item.qty;
       totalAmount += item.price !== null ? item.price * item.qty : 0;
@@ -256,9 +258,10 @@ function buildSummaryMessages(session, groupId) {
   }
 
   let msg2 = '';
-  for (const [itemName, data] of Object.entries(allItemMap)) {
-    const priceStr = data.price !== null ? `${data.price}` : '0';
-    msg2 += `  ${itemName}${priceStr}×${data.qty}\n`;
+  for (const [key, data] of Object.entries(allItemMap)) {
+    const priceStr = data.price !== null ? `${data.price}` : '';
+    const noteStr = data.note ? `（${data.note}）` : '';
+    msg2 += `${data.name}${priceStr}×${data.qty}${noteStr}\n`;
   }
   msg2 += `\n共 ${totalQty} 份\n總金額：$${totalAmount} 元`;
 
