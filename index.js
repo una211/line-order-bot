@@ -131,7 +131,8 @@ function parseOrderText(text) {
 
   // 抓「價格*數量」格式，支援空格與$符號：
   // 雞腿便當80*2、雞腿便當 80*2、雞腿便當$80*2、麵線$50*1、排骨飯 60 *1
-  const priceQtyMatch = itemName.match(/^(.+?)\s*\$?(\d+)\s*[*×xX]\s*(\d+)$/);
+  // 使用貪婪比對(.+)確保餐點名稱完整，價格數量在最後
+  const priceQtyMatch = itemName.match(/^(.+)\s*\$?(\d+)\s*[*×xX]\s*(\d+)$/);
   if (priceQtyMatch) {
     itemName = priceQtyMatch[1].trim();
     price = parseInt(priceQtyMatch[2]);
@@ -141,8 +142,9 @@ function parseOrderText(text) {
 
   // 抓價格（支援空格或$符號後接數字）
   // 麵線$50、麵線 50、麵線 $50
-  const priceMatch = itemName.match(/^(.+?)\s*\$(\d+)$/) ||
-                     itemName.match(/^(.+?)\s+\$?(\d+)$/);
+  // 使用貪婪比對確保餐點名稱完整
+  const priceMatch = itemName.match(/^(.+)\s*\$(\d+)$/) ||
+                     itemName.match(/^(.+)\s+(\d+)$/);
   if (priceMatch) {
     itemName = priceMatch[1].trim();
     price = parseInt(priceMatch[2]);
@@ -844,31 +846,47 @@ async function handleMessage(event) {
   }
 
   // ── 取消單筆 / 取消幾份 ──
-  // 支援：取消豬排、取消 豬排、取消豬排2、取消 豬排 2
-  const cancelMatch = text.match(/^取消\s*(.+?)(\s+(\d+))?$/);
+  // 支援：取消豬排、取消 豬排、取消 豬排 2
+  const cancelMatch = text.match(/^取消\s*(.+?)(?:\s+(\d+))?$/);
   if (cancelMatch && !text.startsWith('取消全部')) {
-    const itemName = cancelMatch[1].trim();
-    const cancelQty = cancelMatch[3] ? parseInt(cancelMatch[3]) : null;
     const o = session.orders[userId];
     if (!o || o.items.length === 0) return;
 
-    const idx = o.items.findIndex(i => i.name === itemName || i.name.includes(itemName));
+    // 先嘗試完全符合（優先），再嘗試包含比對
+    let itemName = cancelMatch[1].trim();
+    let cancelQty = cancelMatch[2] ? parseInt(cancelMatch[2]) : null;
+
+    // 如果最後一個詞是數字，可能是數量
+    const parts = itemName.split(/\s+/);
+    if (parts.length > 1 && /^\d+$/.test(parts[parts.length - 1]) && cancelQty === null) {
+      cancelQty = parseInt(parts[parts.length - 1]);
+      itemName = parts.slice(0, -1).join(' ');
+    }
+
+    // 先完全符合，再包含比對
+    let idx = o.items.findIndex(i => i.name === itemName);
+    if (idx === -1) {
+      idx = o.items.findIndex(i => i.name.includes(itemName) || itemName.includes(i.name));
+    }
+
     if (idx === -1) {
       await replyMessage(replyToken, { type: 'text', text: `找不到「${itemName}」，請輸入「我的訂單」確認品項名稱。` });
       return;
     }
 
     const item = o.items[idx];
+    const displayName = item.note ? `${item.name}（${item.note}）` : item.name;
 
     if (cancelQty === null || cancelQty >= item.qty) {
       // 取消全部該品項
       o.items.splice(idx, 1);
-      await replyMessage(replyToken, { type: 'text', text: `已取消：${itemName}` });
+      await replyMessage(replyToken, { type: 'text', text: `已取消：${displayName}` });
     } else {
       // 取消指定份數
       const remaining = item.qty - cancelQty;
       item.qty = remaining;
-      await replyMessage(replyToken, { type: 'text', text: `已取消 ${itemName} ${cancelQty} 份\n目前訂單：${itemName}${item.price ?? ''}×${remaining}` });
+      const priceStr = item.price !== null ? `${item.price}` : '';
+      await replyMessage(replyToken, { type: 'text', text: `已取消 ${displayName} ${cancelQty} 份\n目前訂單：${item.name}${priceStr}×${remaining}` });
     }
     return;
   }
