@@ -847,26 +847,27 @@ async function handleMessage(event) {
 
   // ── 取消單筆 / 取消幾份 ──
   // 支援：取消豬排、取消 豬排、取消 豬排 2
-  const cancelMatch = text.match(/^取消\s*(.+?)(?:\s+(\d+))?$/);
-  if (cancelMatch && !text.startsWith('取消全部')) {
+  if (text.startsWith('取消') && !text.startsWith('取消全部')) {
     const o = session.orders[userId];
     if (!o || o.items.length === 0) return;
 
-    // 先嘗試完全符合（優先），再嘗試包含比對
-    let itemName = cancelMatch[1].trim();
-    let cancelQty = cancelMatch[2] ? parseInt(cancelMatch[2]) : null;
+    // 移除「取消」關鍵字，取得剩餘內容
+    let remaining = text.replace(/^取消\s*/, '').trim();
 
-    // 如果最後一個詞是數字，可能是數量
-    const parts = itemName.split(/\s+/);
-    if (parts.length > 1 && /^\d+$/.test(parts[parts.length - 1]) && cancelQty === null) {
-      cancelQty = parseInt(parts[parts.length - 1]);
-      itemName = parts.slice(0, -1).join(' ');
+    // 判斷結尾是否為數字（取消份數）
+    let cancelQty = null;
+    const qtyMatch = remaining.match(/^(.+)\s+(\d+)$/);
+    if (qtyMatch) {
+      remaining = qtyMatch[1].trim();
+      cancelQty = parseInt(qtyMatch[2]);
     }
+
+    const itemName = remaining;
 
     // 先完全符合，再包含比對
     let idx = o.items.findIndex(i => i.name === itemName);
     if (idx === -1) {
-      idx = o.items.findIndex(i => i.name.includes(itemName) || itemName.includes(i.name));
+      idx = o.items.findIndex(i => i.name.includes(itemName));
     }
 
     if (idx === -1) {
@@ -883,10 +884,10 @@ async function handleMessage(event) {
       await replyMessage(replyToken, { type: 'text', text: `已取消：${displayName}` });
     } else {
       // 取消指定份數
-      const remaining = item.qty - cancelQty;
-      item.qty = remaining;
+      const remaining2 = item.qty - cancelQty;
+      item.qty = remaining2;
       const priceStr = item.price !== null ? `${item.price}` : '';
-      await replyMessage(replyToken, { type: 'text', text: `已取消 ${displayName} ${cancelQty} 份\n目前訂單：${item.name}${priceStr}×${remaining}` });
+      await replyMessage(replyToken, { type: 'text', text: `已取消 ${displayName} ${cancelQty} 份\n目前訂單：${item.name}${priceStr}×${remaining2}` });
     }
     return;
   }
