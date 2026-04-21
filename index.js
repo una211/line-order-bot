@@ -402,8 +402,10 @@ async function handleMessage(event) {
   }
 
   // ── 設定暱稱（自己）──
-  if (text.startsWith('我的暱稱') || text.startsWith('我的代號')) {
-    const nickname = text.replace(/^(我的暱稱|我的代號)\s*/, '').trim();
+  // 支援：我的代號 小明、設定代號 小明（單一參數）
+  const selfNicknameMatch = text.match(/^(我的暱稱|我的代號|設定暱稱|設定代號)\s+(\S+)$/);
+  if (selfNicknameMatch && !text.match(/^(設定暱稱|設定代號)\s+\S+\s+\S+/)) {
+    const nickname = selfNicknameMatch[2].trim();
     if (!nickname) {
       await replyMessage(replyToken, { type: 'text', text: '請輸入代號，例：我的代號 小明' });
       return;
@@ -461,7 +463,7 @@ async function handleMessage(event) {
       const targetName = deptByNameMatch2[1].trim();
       const dept = deptByNameMatch2[2].trim();
       // 排除指令關鍵字
-      const keywords = ['開單', '結單', '說明', '開始訂餐', '開始點餐', '查看訂單', '目前訂單', '我的訂單', '取消全部', '科室設定', '查看科室'];
+      const keywords = ['開單', '結單', '說明', '開始訂餐', '開始點餐', '查看訂單', '目前訂單', '我的訂單', '取消全部', '科室設定', '查看科室', '設定代號', '設定暱稱', '我的代號', '我的暱稱', '查看代號', '查看暱稱', '代號設定', '暱稱設定'];
       if (!keywords.includes(targetName)) {
         pendingDepts[targetName] = dept;
         await replyMessage(replyToken, { type: 'text', text: `已預設「${targetName}」的科室為「${dept}」\n等 ${targetName} 點餐後自動綁定！` });
