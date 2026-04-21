@@ -379,40 +379,51 @@ async function handleMessage(event) {
   const nicknames = getNicknameSettings(groupId);
   const pendingNicknames = getPendingNicknameSettings(groupId);
 
-  // ── 幫別人設定暱稱（管理者）── 必須在自己設定之前判斷
-  // 格式1：設定代號 LINE名稱 代號
-  // 格式2：LINE名稱的代號是XXX 或 LINE名稱的暱稱是XXX
-  const setNicknameMatch1 = text.match(/^(設定暱稱|設定代號)\s+(.+)\s+(\S+)$/);
-  const setNicknameMatch2 = text.match(/^(.+)的(代號|暱稱)是(\S+)$/);
-  if (setNicknameMatch1) {
-    const lineName = setNicknameMatch1[2].trim();
-    const nickname = setNicknameMatch1[3].trim();
-    pendingNicknames[lineName] = nickname;
-    await replyMessage(replyToken, { type: 'text', text: `已預設「${lineName}」的代號為「${nickname}」
-等 ${lineName} 點餐後自動綁定！` });
-    return;
-  }
-  if (setNicknameMatch2) {
-    const lineName = setNicknameMatch2[1].trim();
-    const nickname = setNicknameMatch2[3].trim();
-    pendingNicknames[lineName] = nickname;
-    await replyMessage(replyToken, { type: 'text', text: `已預設「${lineName}」的代號為「${nickname}」
-等 ${lineName} 點餐後自動綁定！` });
-    return;
-  }
+  // ── 代號設定 ──
+  const nicknameKeywords = ['我的代號', '我的暱稱', '設定代號', '設定暱稱'];
+  const isNicknameCmd = nicknameKeywords.some(k => text.startsWith(k));
 
-  // ── 設定暱稱（自己）──
-  // 支援：我的代號 小明、設定代號 小明（單一參數）
-  const selfNicknameMatch = text.match(/^(我的暱稱|我的代號|設定暱稱|設定代號)\s+(\S+)$/);
-  if (selfNicknameMatch && !text.match(/^(設定暱稱|設定代號)\s+\S+\s+\S+/)) {
-    const nickname = selfNicknameMatch[2].trim();
-    if (!nickname) {
-      await replyMessage(replyToken, { type: 'text', text: '請輸入代號，例：我的代號 小明' });
+  if (isNicknameCmd) {
+    // 移除關鍵字後取得剩餘內容
+    let remaining = text;
+    for (const k of nicknameKeywords) {
+      if (remaining.startsWith(k)) {
+        remaining = remaining.slice(k.length).trim();
+        break;
+      }
+    }
+
+    const parts = remaining.split(/\s+/);
+
+    if (parts.length === 0 || remaining === '') {
+      // 沒有輸入任何內容
+      await replyMessage(replyToken, { type: 'text', text: '請輸入代號，例：\n我的代號 小明\n設定代號 陳大明 小明' });
+      return;
+    } else if (parts.length === 1) {
+      // 只有一個參數 → 設定自己的代號
+      const nickname = parts[0];
+      nicknames[userId] = nickname;
+      if (session.orders[userId]) session.orders[userId].name = nickname;
+      await replyMessage(replyToken, { type: 'text', text: `已設定你的代號為「${nickname}」` });
+      return;
+    } else {
+      // 兩個以上參數 → 幫別人設定代號
+      // 最後一個是代號，前面全部是LINE名稱
+      const nickname = parts[parts.length - 1];
+      const lineName = parts.slice(0, parts.length - 1).join(' ');
+      pendingNicknames[lineName] = nickname;
+      await replyMessage(replyToken, { type: 'text', text: `已預設「${lineName}」的代號為「${nickname}」\n等 ${lineName} 點餐後自動綁定！` });
       return;
     }
-    nicknames[userId] = nickname;
-    if (session.orders[userId]) session.orders[userId].name = nickname;
-    await replyMessage(replyToken, { type: 'text', text: `已設定你的代號為「${nickname}」` });
+  }
+
+  // ── 口語格式：XX的代號是OO 或 XX的暱稱是OO ──
+  const naturalNicknameMatch = text.match(/^(.+)的(代號|暱稱)是(\S+)$/);
+  if (naturalNicknameMatch) {
+    const lineName = naturalNicknameMatch[1].trim();
+    const nickname = naturalNicknameMatch[3].trim();
+    pendingNicknames[lineName] = nickname;
+    await replyMessage(replyToken, { type: 'text', text: `已預設「${lineName}」的代號為「${nickname}」\n等 ${lineName} 點餐後自動綁定！` });
     return;
   }
 
