@@ -450,9 +450,12 @@ async function handleMessage(event) {
       return;
     }
     depts[userId] = dept;
-    // 同步更新訂單裡的科室（不管有沒有設定代號都用userId綁定）
-    if (session.orders[userId]) session.orders[userId].dept = dept;
+    // 同步更新訂單裡的科室和名稱（確保使用代號而非原本LINE名稱）
     const name = await getMemberName(groupId, userId);
+    if (session.orders[userId]) {
+      session.orders[userId].dept = dept;
+      session.orders[userId].name = name; // 同步更新名稱（可能是代號）
+    }
     await replyMessage(replyToken, { type: 'text', text: `已設定 ${name} 的科室為「${dept}」` });
     return;
   }
@@ -853,29 +856,36 @@ async function handleMessage(event) {
   const { itemName, price, note, qty } = parseOrderText(text);
   if (!itemName) return;
 
-  const name = await getMemberName(groupId, userId);
+  // 取得 LINE 原本名稱（用來比對待綁定設定）
+  const lineName = await getMemberName(groupId, userId);
+
+  // 檢查是否有待綁定的暱稱設定（用原本 LINE 名稱比對）
+  if (!nicknames[userId] && pendingNicknames[lineName]) {
+    nicknames[userId] = pendingNicknames[lineName];
+    delete pendingNicknames[lineName];
+  }
+
+  // 最終顯示名稱：優先用代號，沒有代號才用 LINE 名稱
+  let name = nicknames[userId] || lineName;
 
   if (!session.orders[userId]) {
     session.orders[userId] = { name, dept: depts[userId] || null, items: [] };
   }
+  // 每次點餐都更新名稱（確保代號設定後立即生效）
   session.orders[userId].name = name;
 
-  // 檢查是否有待綁定的暱稱設定
-  if (!nicknames[userId] && pendingNicknames[name]) {
-    nicknames[userId] = pendingNicknames[name];
-    session.orders[userId].name = nicknames[userId];
-    delete pendingNicknames[name];
-    name = nicknames[userId];
+  // 檢查是否有待綁定的科室設定（用代號或原本名稱比對）
+  if (!depts[userId]) {
+    if (pendingDepts[name]) {
+      depts[userId] = pendingDepts[name];
+      delete pendingDepts[name];
+    } else if (pendingDepts[lineName]) {
+      depts[userId] = pendingDepts[lineName];
+      delete pendingDepts[lineName];
+    }
   }
 
-  // 檢查是否有待綁定的科室設定
-  if (!depts[userId] && pendingDepts[name]) {
-    depts[userId] = pendingDepts[name];
-    session.orders[userId].dept = depts[userId];
-    delete pendingDepts[name];
-  }
-
-  // 每次點餐都重新確認科室（確保設定代號後科室仍正確）
+  // 每次點餐都重新確認科室
   session.orders[userId].dept = depts[userId] || null;
   session.orders[userId].items.push({ name: itemName, price, note, qty });
 
