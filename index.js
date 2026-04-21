@@ -379,27 +379,38 @@ async function handleMessage(event) {
   const nicknames = getNicknameSettings(groupId);
   const pendingNicknames = getPendingNicknameSettings(groupId);
 
+  // ── 幫別人設定暱稱（管理者）── 必須在自己設定之前判斷
+  // 格式1：設定代號 LINE名稱 代號
+  // 格式2：LINE名稱的代號是XXX 或 LINE名稱的暱稱是XXX
+  const setNicknameMatch1 = text.match(/^(設定暱稱|設定代號)\s+(.+)\s+(\S+)$/);
+  const setNicknameMatch2 = text.match(/^(.+)的(代號|暱稱)是(\S+)$/);
+  if (setNicknameMatch1) {
+    const lineName = setNicknameMatch1[2].trim();
+    const nickname = setNicknameMatch1[3].trim();
+    pendingNicknames[lineName] = nickname;
+    await replyMessage(replyToken, { type: 'text', text: `已預設「${lineName}」的代號為「${nickname}」
+等 ${lineName} 點餐後自動綁定！` });
+    return;
+  }
+  if (setNicknameMatch2) {
+    const lineName = setNicknameMatch2[1].trim();
+    const nickname = setNicknameMatch2[3].trim();
+    pendingNicknames[lineName] = nickname;
+    await replyMessage(replyToken, { type: 'text', text: `已預設「${lineName}」的代號為「${nickname}」
+等 ${lineName} 點餐後自動綁定！` });
+    return;
+  }
+
   // ── 設定暱稱（自己）──
-  if (text.startsWith('我的暱稱') || text.startsWith('設定暱稱') || text.startsWith('我的代號') || text.startsWith('設定代號')) {
-    const nickname = text.replace(/^(我的暱稱|設定暱稱|我的代號|設定代號)\s*/, '').trim();
+  if (text.startsWith('我的暱稱') || text.startsWith('我的代號')) {
+    const nickname = text.replace(/^(我的暱稱|我的代號)\s*/, '').trim();
     if (!nickname) {
-      await replyMessage(replyToken, { type: 'text', text: '請輸入暱稱，例：我的暱稱 小明 或 我的代號 小明' });
+      await replyMessage(replyToken, { type: 'text', text: '請輸入代號，例：我的代號 小明' });
       return;
     }
     nicknames[userId] = nickname;
     if (session.orders[userId]) session.orders[userId].name = nickname;
-    await replyMessage(replyToken, { type: 'text', text: `已設定你的暱稱為「${nickname}」` });
-    return;
-  }
-
-  // ── 幫別人設定暱稱（管理者）──
-  // 格式：設定暱稱 LINE名稱 暱稱
-  const setNicknameMatch = text.match(/^(設定暱稱|設定代號)\s+(\S+)\s+(\S+)$/);
-  if (setNicknameMatch) {
-    const lineName = setNicknameMatch[1].trim();
-    const nickname = setNicknameMatch[2].trim();
-    pendingNicknames[lineName] = nickname;
-    await replyMessage(replyToken, { type: 'text', text: `已預設「${lineName}」的暱稱為「${nickname}」\n等 ${lineName} 點餐後自動綁定！` });
+    await replyMessage(replyToken, { type: 'text', text: `已設定你的代號為「${nickname}」` });
     return;
   }
 
