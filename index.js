@@ -492,19 +492,19 @@ async function handleMessage(event) {
   }
 
   // ── 批次設定科室 ──
-  if (text.startsWith('批次設定科室') && !text.startsWith('批次設定科室+代號')) {
+  if (text.startsWith('批次設定科室') && !text.startsWith('批次設定科室+代號') && !text.startsWith('批次設定科室＋代號')) {
     const lines = text.split('\n').slice(1).map(l => l.trim()).filter(Boolean);
     if (lines.length === 0) {
-      await replyMessage(replyToken, { type: 'text', text: '請輸入名單，例：\n批次設定科室\n阿明 行政部\n大偉 業務部' });
+      await replyMessage(replyToken, { type: 'text', text: '請輸入名單，例：\n批次設定科室\n陳小明/行政部\n王貞（小詠）/業務部' });
       return;
     }
     let msg = '✅ 已批次設定科室：\n';
     let count = 0;
     for (const line of lines) {
-      const parts = line.split(/\s+/);
+      const parts = line.split('/').map(p => p.trim());
       if (parts.length < 2) continue;
-      const lineName = parts.slice(0, parts.length - 1).join(' ');
-      const dept = parts[parts.length - 1];
+      const lineName = parts[0];
+      const dept = parts[1];
       pendingDepts[lineName] = dept;
       msg += `  ${lineName} → ${dept}\n`;
       count++;
@@ -518,16 +518,16 @@ async function handleMessage(event) {
   if (text.startsWith('批次設定代號')) {
     const lines = text.split('\n').slice(1).map(l => l.trim()).filter(Boolean);
     if (lines.length === 0) {
-      await replyMessage(replyToken, { type: 'text', text: '請輸入名單，例：\n批次設定代號\n陳大明 小明\n王大偉 阿偉' });
+      await replyMessage(replyToken, { type: 'text', text: '請輸入名單，例：\n批次設定代號\n陳小明/Tina\n王貞（小詠）/棠棠' });
       return;
     }
     let msg = '✅ 已批次設定代號：\n';
     let count = 0;
     for (const line of lines) {
-      const parts = line.split(/\s+/);
+      const parts = line.split('/').map(p => p.trim());
       if (parts.length < 2) continue;
-      const lineName = parts.slice(0, parts.length - 1).join(' ');
-      const nickname = parts[parts.length - 1];
+      const lineName = parts[0];
+      const nickname = parts[1];
       pendingNicknames[lineName] = nickname;
       msg += `  ${lineName} → ${nickname}\n`;
       count++;
@@ -541,28 +541,23 @@ async function handleMessage(event) {
   if (text.startsWith('批次設定科室+代號') || text.startsWith('批次設定科室＋代號')) {
     const lines = text.split('\n').slice(1).map(l => l.trim()).filter(Boolean);
     if (lines.length === 0) {
-      await replyMessage(replyToken, { type: 'text', text: '請輸入名單，例：\n批次設定科室+代號\n阿明 行政部 小明\n大偉 業務部（無代號）\n小花 行政部 花花' });
+      await replyMessage(replyToken, { type: 'text', text: '請輸入名單，例：\n批次設定科室+代號\n陳小明/行政部/Tina\n王貞（小詠）/業務部/棠棠\n小宇/業務部（無代號）' });
       return;
     }
     let msg = '✅ 已批次設定：\n';
     let count = 0;
     for (const line of lines) {
-      const parts = line.split(/\s+/);
+      const parts = line.split('/').map(p => p.trim());
       if (parts.length < 2) continue;
-      if (parts.length === 2) {
-        // 只有2個欄位：LINE名稱 科室（無代號）
-        const lineName = parts[0];
-        const dept = parts[1];
-        pendingDepts[lineName] = dept;
-        msg += `  ${lineName} → ${dept}（無代號）\n`;
-      } else {
-        // 3個以上欄位：LINE名稱 科室 代號
-        const nickname = parts[parts.length - 1];
-        const dept = parts[parts.length - 2];
-        const lineName = parts.slice(0, parts.length - 2).join(' ');
-        pendingDepts[lineName] = dept;
+      const lineName = parts[0];
+      const dept = parts[1];
+      const nickname = parts[2] || null;
+      pendingDepts[lineName] = dept;
+      if (nickname) {
         pendingNicknames[lineName] = nickname;
         msg += `  ${lineName} → ${dept}，代號：${nickname}\n`;
+      } else {
+        msg += `  ${lineName} → ${dept}（無代號）\n`;
       }
       count++;
     }
@@ -646,18 +641,19 @@ async function handleMessage(event) {
   阿明 行政部（未開單時）
   查看科室
 
-批次設定
+批次設定（用/分隔）
   批次設定科室
-  阿明 行政部
-  大偉 業務部
+  陳小明/行政部
+  王貞（小詠）/業務部
 
   批次設定代號
-  陳大明 小明
-  王大偉 阿偉
+  陳小明/Tina
+  王貞（小詠）/棠棠
 
   批次設定科室+代號
-  阿明 行政部 小明
-  大偉 業務部 阿偉
+  陳小明/行政部/Tina
+  王貞（小詠）/業務部/棠棠
+  小宇/業務部（無代號）
 
 代號設定
   我的代號 小明
