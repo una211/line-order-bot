@@ -849,7 +849,12 @@ async function handleMessage(event) {
   // 支援：取消豬排、取消 豬排、取消 豬排 2
   if (text.startsWith('取消') && !text.startsWith('取消全部')) {
     const o = session.orders[userId];
-    if (!o || o.items.length === 0) return;
+
+    // 沒有訂單時直接告知，不繼續往下執行點餐
+    if (!o || o.items.length === 0) {
+      await replyMessage(replyToken, { type: 'text', text: '你還沒有點餐，無法取消。' });
+      return;
+    }
 
     // 移除「取消」關鍵字，取得剩餘內容
     let remaining = text.replace(/^取消\s*/, '').trim();
@@ -881,7 +886,14 @@ async function handleMessage(event) {
     if (cancelQty === null || cancelQty >= item.qty) {
       // 取消全部該品項
       o.items.splice(idx, 1);
-      await replyMessage(replyToken, { type: 'text', text: `已取消：${displayName}` });
+      // 顯示剩餘訂單
+      const leftItems = o.items.map(i => {
+        const p = i.price !== null ? `${i.price}` : '';
+        const n = i.note ? `（${i.note}）` : '';
+        return `${i.name}${p}×${i.qty}${n}`;
+      });
+      const leftStr = leftItems.length > 0 ? `\n目前訂單：${leftItems.join('、')}` : '\n目前無其他訂單';
+      await replyMessage(replyToken, { type: 'text', text: `已取消：${displayName}${leftStr}` });
     } else {
       // 取消指定份數
       const remaining2 = item.qty - cancelQty;
@@ -965,14 +977,14 @@ async function handleMessage(event) {
     return;
   }
 
-  // ── 點餐 ──
-  const { itemName, price, note, qty } = parseOrderText(text);
-  if (!itemName) return;
+  // ── 點餐（支援多行一次點多道）──
+  // 將訊息依換行切分，每行各自解析為獨立餐點
+  const orderLines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
   // 取得 LINE 原本名稱（用來比對待綁定設定）
   const lineName = await getMemberName(groupId, userId);
 
-  // 檢查是否有待綁定的暱稱設定（用原本 LINE 名稱比對）
+  // 檢查是否有待綁定的暱稱設定
   if (!nicknames[userId] && pendingNicknames[lineName]) {
     nicknames[userId] = pendingNicknames[lineName];
     delete pendingNicknames[lineName];
@@ -984,10 +996,9 @@ async function handleMessage(event) {
   if (!session.orders[userId]) {
     session.orders[userId] = { name, dept: depts[userId] || null, items: [] };
   }
-  // 每次點餐都更新名稱（確保代號設定後立即生效）
   session.orders[userId].name = name;
 
-  // 檢查是否有待綁定的科室設定（用代號或原本名稱比對）
+  // 檢查是否有待綁定的科室設定
   if (!depts[userId]) {
     if (pendingDepts[name]) {
       depts[userId] = pendingDepts[name];
@@ -997,18 +1008,48 @@ async function handleMessage(event) {
       delete pendingDepts[lineName];
     }
   }
-
-  // 每次點餐都重新確認科室
   session.orders[userId].dept = depts[userId] || null;
-  session.orders[userId].items.push({ name: itemName, price, note, qty });
+
+  // 逐行解析餐點
+  const addedItems = [];
+  for (const line of orderLines) {
+    const parsed = parseOrderText(line);
+    if (!parsed.itemName) continue;
+    session.orders[userId].items.push({
+      name: parsed.itemName,
+      price: parsed.price,
+      note: parsed.note,
+      qty: parsed.qty
+    });
+    addedItems.push(parsed);
+  }
+
+  if (addedItems.length === 0) return;
+
+  // 回覆確認（多行時列出所有點的餐點）
+  let confirmText = '';
+  if (addedItems.length === 1) {
+    const p = addedItems[0];
+    const priceStr = p.price !== null ? ` $${p.price * p.qty}` : '';
+    const qtyStr = p.qty > 1 ? ` x${p.qty}` : '';
+    const noteStr = p.note ? `（${p.note}）` : '';
+    confirmText = `✅ ${name} 點了：${p.itemName}${noteStr}${qtyStr}${priceStr}`;
+  } else {
+    confirmText = `✅ ${name} 點了：\n`;
+    for (const p of addedItems) {
+      const priceStr = p.price !== null ? ` $${p.price * p.qty}` : '';
+      const qtyStr = p.qty > 1 ? ` x${p.qty}` : '';
+      const noteStr = p.note ? `（${p.note}）` : '';
+      confirmText += `  ${p.itemName}${noteStr}${qtyStr}${priceStr}\n`;
+    }
+    confirmText = confirmText.trim();
+  }
 
   // 回覆確認
-  const priceStr = price !== null ? ` $${price * qty}` : '';
-  const qtyStr = qty > 1 ? ` x${qty}` : '';
-  const noteStr = note ? `（${note}）` : '';
+  const priceStr = ''; const qtyStr = ''; const noteStr = '';
   await replyMessage(replyToken, {
     type: 'text',
-    text: `✅ ${name} 點了：${itemName}${noteStr}${qtyStr}${priceStr}`
+    text: confirmText
   });
 }
 
