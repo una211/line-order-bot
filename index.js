@@ -541,20 +541,29 @@ async function handleMessage(event) {
   if (text.startsWith('批次設定科室+代號') || text.startsWith('批次設定科室＋代號')) {
     const lines = text.split('\n').slice(1).map(l => l.trim()).filter(Boolean);
     if (lines.length === 0) {
-      await replyMessage(replyToken, { type: 'text', text: '請輸入名單，例：\n批次設定科室+代號\n阿明 行政部 小明\n大偉 業務部 阿偉' });
+      await replyMessage(replyToken, { type: 'text', text: '請輸入名單，例：\n批次設定科室+代號\n阿明 行政部 小明\n大偉 業務部（無代號）\n小花 行政部 花花' });
       return;
     }
     let msg = '✅ 已批次設定：\n';
     let count = 0;
     for (const line of lines) {
       const parts = line.split(/\s+/);
-      if (parts.length < 3) continue;
-      const nickname = parts[parts.length - 1];
-      const dept = parts[parts.length - 2];
-      const lineName = parts.slice(0, parts.length - 2).join(' ');
-      pendingDepts[lineName] = dept;
-      pendingNicknames[lineName] = nickname;
-      msg += `  ${lineName} → ${dept}，代號：${nickname}\n`;
+      if (parts.length < 2) continue;
+      if (parts.length === 2) {
+        // 只有2個欄位：LINE名稱 科室（無代號）
+        const lineName = parts[0];
+        const dept = parts[1];
+        pendingDepts[lineName] = dept;
+        msg += `  ${lineName} → ${dept}（無代號）\n`;
+      } else {
+        // 3個以上欄位：LINE名稱 科室 代號
+        const nickname = parts[parts.length - 1];
+        const dept = parts[parts.length - 2];
+        const lineName = parts.slice(0, parts.length - 2).join(' ');
+        pendingDepts[lineName] = dept;
+        pendingNicknames[lineName] = nickname;
+        msg += `  ${lineName} → ${dept}，代號：${nickname}\n`;
+      }
       count++;
     }
     msg += `\n共 ${count} 人，等以上成員點餐後自動綁定！`;
