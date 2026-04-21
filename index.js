@@ -180,12 +180,13 @@ function buildSummaryMessages(session, groupId) {
 
   // 計算科室內依餐點彙整
   function buildDeptSection(members) {
-    // 把同科室的餐點整理：{ itemName: { price, qty, names[] } }
+    // 把同科室的餐點整理：{ "餐點名稱（備註）": { name, note, price, qty, names[] } }
     const itemMap = {};
     for (const m of members) {
       for (const item of m.items) {
-        const key = item.name;
-        if (!itemMap[key]) itemMap[key] = { price: item.price, qty: 0, names: [] };
+        // key 包含備註，確保備註不同的餐點分開統計
+        const key = item.note ? `${item.name}（${item.note}）` : item.name;
+        if (!itemMap[key]) itemMap[key] = { name: item.name, note: item.note || null, price: item.price, qty: 0, names: [] };
         itemMap[key].qty += item.qty;
         if (!itemMap[key].names.includes(m.name)) {
           itemMap[key].names.push(m.name);
@@ -210,10 +211,11 @@ function buildSummaryMessages(session, groupId) {
     const deptTotal = calcDeptTotal(itemMap);
     grandTotal += deptTotal;
     msg1 += `\n${dept}　小計 $${deptTotal}\n`;
-    for (const [itemName, data] of Object.entries(itemMap)) {
+    for (const [key, data] of Object.entries(itemMap)) {
       const priceStr = data.price !== null ? `${data.price}` : '';
+      const noteStr = data.note ? `（${data.note}）` : '';
       const names = data.names.join('、');
-      msg1 += `  ${itemName}${priceStr}×${data.qty}（${names}）\n`;
+      msg1 += `  ${data.name}${priceStr}×${data.qty}${noteStr}（${names}）\n`;
       grandQty += data.qty;
     }
   }
