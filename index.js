@@ -859,12 +859,25 @@ async function handleMessage(event) {
     // 移除「取消」關鍵字，取得剩餘內容
     let remaining = text.replace(/^取消\s*/, '').trim();
 
-    // 判斷結尾是否為數字（取消份數）
+    // 判斷取消份數，支援多種格式：
+    // 取消 生食級干貝 2
+    // 取消 生食級干貝*2
+    // 取消 生食級干貝×2
+    // 取消 生食級干貝x2
     let cancelQty = null;
-    const qtyMatch = remaining.match(/^(.+)\s+(\d+)$/);
-    if (qtyMatch) {
-      remaining = qtyMatch[1].trim();
-      cancelQty = parseInt(qtyMatch[2]);
+
+    // 先判斷 *數量 格式
+    const qtyStarMatch = remaining.match(/^(.+?)\s*[*×xX]\s*(\d+)$/);
+    if (qtyStarMatch) {
+      remaining = qtyStarMatch[1].trim();
+      cancelQty = parseInt(qtyStarMatch[2]);
+    } else {
+      // 再判斷空格+數字格式
+      const qtySpaceMatch = remaining.match(/^(.+)\s+(\d+)$/);
+      if (qtySpaceMatch) {
+        remaining = qtySpaceMatch[1].trim();
+        cancelQty = parseInt(qtySpaceMatch[2]);
+      }
     }
 
     const itemName = remaining;
