@@ -129,10 +129,11 @@ function parseOrderText(text) {
     note = noteKeywordMatch[2].trim();
   }
 
-  // 抓「價格*數量」格式，支援空格與$符號：
-  // 雞腿便當80*2、雞腿便當 80*2、雞腿便當$80*2、麵線$50*1、排骨飯 60 *1
-  // 使用貪婪比對(.+)確保餐點名稱完整，價格數量在最後
-  const priceQtyMatch = itemName.match(/^(.+)\s*\$?(\d+)\s*[*×xX]\s*(\d+)$/);
+  // 抓「價格*數量」格式
+  // 必須是「空格或$」+數字+[*×xX]+數字 結尾
+  // 例：雞腿便當 80*2、雞腿便當$80*2、排骨飯 60 *1
+  const priceQtyMatch = itemName.match(/^(.+?)[\s$](\d+)\s*[*×xX]\s*(\d+)$/) ||
+                        itemName.match(/^(.+?)\s*\$(\d+)\s*[*×xX]\s*(\d+)$/);
   if (priceQtyMatch) {
     itemName = priceQtyMatch[1].trim();
     price = parseInt(priceQtyMatch[2]);
@@ -142,9 +143,8 @@ function parseOrderText(text) {
 
   // 抓價格（支援空格或$符號後接數字）
   // 麵線$50、麵線 50、麵線 $50
-  // 使用貪婪比對確保餐點名稱完整
-  const priceMatch = itemName.match(/^(.+)\s*\$(\d+)$/) ||
-                     itemName.match(/^(.+)\s+(\d+)$/);
+  const priceMatch = itemName.match(/^(.+?)\s*\$(\d+)$/) ||
+                     itemName.match(/^(.+?)\s+(\d+)$/);
   if (priceMatch) {
     itemName = priceMatch[1].trim();
     price = parseInt(priceMatch[2]);
