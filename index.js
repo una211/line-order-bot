@@ -727,7 +727,7 @@ async function handleMessage(event) {
     return;
   }
 
-  // ── 單獨設定結單時間 ──
+  // ── 11:30結單 → 未開單時觸發開單，已開單時只更新結單時間 ──
   const timeOnlyMatch = text.match(/^(\d{1,2}:\d{2})結單$/);
   if (timeOnlyMatch) {
     const deadline = parseDeadlineTime(timeOnlyMatch[1]);
@@ -743,7 +743,17 @@ async function handleMessage(event) {
     if (session.deadlineTimer) clearTimeout(session.deadlineTimer);
     session.deadline = deadline;
     session.deadlineTimer = setTimeout(() => autoClose(groupId), msUntil);
-    await replyMessage(replyToken, { type: 'text', text: `已設定結單時間：${formatTime(deadline)}` });
+
+    if (!session.isOpen) {
+      // 未開單 → 同時觸發開單
+      session.isOpen = true;
+      session.openTime = new Date();
+      session.orders = {};
+      await replyMessage(replyToken, { type: 'text', text: `開始點餐！將於 ${formatTime(deadline)} 自動結單\n直接輸入餐點即可點餐！\nEX：雞腿便當（飯換菜）$110*3` });
+    } else {
+      // 已開單 → 只更新結單時間
+      await replyMessage(replyToken, { type: 'text', text: `已更新結單時間：${formatTime(deadline)}` });
+    }
     return;
   }
 
