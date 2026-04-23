@@ -852,84 +852,170 @@ async function handleMessage(event) {
   // ── # 開頭不記錄 ──
   if (text.startsWith('#')) return;
 
-  // ── 取消全部 ──
-  if (text === '取消全部') {
-    if (session.orders[userId]) {
+  // ── 輔助：顯示剩餘訂單 ──
+  function showLeft(items) {
+    if (items.length === 0) return '\n目前無其他訂單';
+    const strs = items.map(i => {
+      const p = i.price !== null ? `${i.price}` : '';
+      const n = i.note ? `（${i.note}）` : '';
+      return `${i.name}${n}${p}×${i.qty}`;
+    });
+    return `\n目前訂單：${strs.join('、')}`;
+  }
+
+  // ── 輔助：解析品項名稱和數量 ──
+  function parseItemAndQty(str) {
+    let itemName = str.trim();
+    let qty = 1;
+    const starMatch = itemName.match(/^(.+?)\s*[*×xX]\s*(\d+)$/);
+    if (starMatch) {
+      itemName = starMatch[1].trim();
+      qty = parseInt(starMatch[2]);
+    }
+    return { itemName, qty };
+  }
+
+  // ── 取消我的訂單（自己所有）──
+  if (text === '取消我的訂單' || text === '取消我的餐點') {
+    if (session.orders[userId] && session.orders[userId].items.length > 0) {
+      const myName = session.orders[userId].name;
       session.orders[userId].items = [];
-      const name = session.orders[userId].name;
-      await replyMessage(replyToken, { type: 'text', text: `已取消 ${name} 的所有訂單。` });
+      await replyMessage(replyToken, { type: 'text', text: `已取消 ${myName} 的所有訂單。` });
+    } else {
+      await replyMessage(replyToken, { type: 'text', text: '你還沒有點餐，無法取消。' });
     }
     return;
   }
 
-  // ── 取消單筆 / 取消幾份 ──
-  // 支援：取消豬排、取消 豬排、取消 豬排 2
-  if (text.startsWith('取消') && !text.startsWith('取消全部')) {
-    const o = session.orders[userId];
+  // ── 取消 @All 的OO 或 所有訂單 ──
+  const cancelAllMatch = text.match(/^取消 @All[的 ](.+)$/);
+  if (cancelAllMatch) {
+    const target = cancelAllMatch[1].trim();
+    if (target === '所有訂單') {
+      for (const uid of Object.keys(session.orders)) {
+        session.orders[uid].items = [];
+      }
+      await replyMessage(replyToken, { type: 'text', text: '已取消所有人的所有訂單。' });
+    } else {
+      const { itemName: allItem } = parseItemAndQty(target);
+      let total = 0;
+      for (const uid of Object.keys(session.orders)) {
+        const o2 = session.orders[uid];
+        let i2 = o2.items.findIndex(i => i.name === allItem);
+        if (i2 === -1) i2 = o2.items.findIndex(i => i.name.includes(allItem));
+        if (i2 !== -1) { o2.items.splice(i2, 1); total++; }
+      }
+      if (total > 0) {
+        await replyMessage(replyToken, { type: 'text', text: `已取消所有人的「${allItem}」，共 ${total} 人受影響。` });
+      } else {
+        await replyMessage(replyToken, { type: 'text', text: `找不到「${allItem}」，沒有人點這道。` });
+      }
+    }
+    return;
+  }
 
-    // 沒有訂單時直接告知，不繼續往下執行點餐
+  // ── 取消 @小明 的OO 或 所有訂單 ──
+  // 支援：取消 @小明的雞腿便當 或 取消 @小明 雞腿便當
+  const cancelPersonMatch = text.match(/^取消 @(.+?)[的 ](.+)$/);
+  if (cancelPersonMatch) {
+    const targetName = cancelPersonMatch[1].trim();
+    const targetItem = cancelPersonMatch[2].trim();
+
+    // 找到目標人的 userId（比對 LINE 名稱）
+    let targetUid = null;
+    for (const uid of Object.keys(session.orders)) {
+      const lineName = await getMemberName(groupId, uid);
+      if (lineName === targetName || session.orders[uid].name === targetName) {
+        targetUid = uid;
+        break;
+      }
+    }
+
+    if (!targetUid) {
+      await replyMessage(replyToken, { type: 'text', text: `找不到「${targetName}」，請確認名稱是否正確。` });
+      return;
+    }
+
+    const oTarget = session.orders[targetUid];
+
+    if (targetItem === '所有訂單') {
+      oTarget.items = [];
+      await replyMessage(replyToken, { type: 'text', text: `已取消 ${targetName} 的所有訂單。` });
+      return;
+    }
+
+    const { itemName: pItem, qty: pQty } = parseItemAndQty(targetItem);
+    let pidx = oTarget.items.findIndex(i => i.name === pItem);
+    if (pidx === -1) pidx = oTarget.items.findIndex(i => i.name.includes(pItem));
+    if (pidx === -1) {
+      await replyMessage(replyToken, { type: 'text', text: `找不到「${targetName}」的「${pItem}」。` });
+      return;
+    }
+
+    const pTargetItem = oTarget.items[pidx];
+    const pDisplayName = pTargetItem.note ? `${pTargetItem.name}（${pTargetItem.note}）` : pTargetItem.name;
+
+    if (pQty >= pTargetItem.qty) {
+      oTarget.items.splice(pidx, 1);
+      await replyMessage(replyToken, { type: 'text', text: `已取消 ${targetName} 的：${pDisplayName}` });
+    } else {
+      pTargetItem.qty -= pQty;
+      const pp = pTargetItem.price !== null ? `${pTargetItem.price}` : '';
+      await replyMessage(replyToken, { type: 'text', text: `已取消 ${targetName} 的 ${pDisplayName} ${pQty} 份\n剩餘：${pTargetItem.name}${pp}×${pTargetItem.qty}` });
+    }
+    return;
+  }
+
+  // ── 取消所有OO（自己的某品項全部份數）──
+  if (text.startsWith('取消所有') && text !== '取消所有訂單') {
+    const o = session.orders[userId];
+    if (!o || o.items.length === 0) {
+      await replyMessage(replyToken, { type: 'text', text: '你還沒有點餐，無法取消。' });
+      return;
+    }
+    const allItemName = text.replace(/^取消所有\s*/, '').trim();
+    let aidx = o.items.findIndex(i => i.name === allItemName);
+    if (aidx === -1) aidx = o.items.findIndex(i => i.name.includes(allItemName));
+    if (aidx === -1) {
+      await replyMessage(replyToken, { type: 'text', text: `找不到「${allItemName}」，請輸入「我的訂單」確認品項名稱。` });
+      return;
+    }
+    const allItem2 = o.items[aidx];
+    const allDisplay = allItem2.note ? `${allItem2.name}（${allItem2.note}）` : allItem2.name;
+    o.items.splice(aidx, 1);
+    await replyMessage(replyToken, { type: 'text', text: `已取消所有：${allDisplay}${showLeft(o.items)}` });
+    return;
+  }
+
+  // ── 取消單筆 / 取消幾份（自己）──
+  if (text.startsWith('取消')) {
+    const o = session.orders[userId];
     if (!o || o.items.length === 0) {
       await replyMessage(replyToken, { type: 'text', text: '你還沒有點餐，無法取消。' });
       return;
     }
 
-    // 移除「取消」關鍵字，取得剩餘內容
     let remaining = text.replace(/^取消\s*/, '').trim();
+    const { itemName: cItem, qty: cQty } = parseItemAndQty(remaining);
 
-    // 判斷取消份數，支援多種格式：
-    // 取消 生食級干貝 2
-    // 取消 生食級干貝*2
-    // 取消 生食級干貝×2
-    // 取消 生食級干貝x2
-    let cancelQty = null;
+    let cidx = o.items.findIndex(i => i.name === cItem);
+    if (cidx === -1) cidx = o.items.findIndex(i => i.name.includes(cItem));
 
-    // 先判斷 *數量 格式
-    const qtyStarMatch = remaining.match(/^(.+?)\s*[*×xX]\s*(\d+)$/);
-    if (qtyStarMatch) {
-      remaining = qtyStarMatch[1].trim();
-      cancelQty = parseInt(qtyStarMatch[2]);
-    } else {
-      // 再判斷空格+數字格式
-      const qtySpaceMatch = remaining.match(/^(.+)\s+(\d+)$/);
-      if (qtySpaceMatch) {
-        remaining = qtySpaceMatch[1].trim();
-        cancelQty = parseInt(qtySpaceMatch[2]);
-      }
-    }
-
-    const itemName = remaining;
-
-    // 先完全符合，再包含比對
-    let idx = o.items.findIndex(i => i.name === itemName);
-    if (idx === -1) {
-      idx = o.items.findIndex(i => i.name.includes(itemName));
-    }
-
-    if (idx === -1) {
-      await replyMessage(replyToken, { type: 'text', text: `找不到「${itemName}」，請輸入「我的訂單」確認品項名稱。` });
+    if (cidx === -1) {
+      await replyMessage(replyToken, { type: 'text', text: `找不到「${cItem}」，請輸入「我的訂單」確認品項名稱。` });
       return;
     }
 
-    const item = o.items[idx];
-    const displayName = item.note ? `${item.name}（${item.note}）` : item.name;
+    const cTargetItem = o.items[cidx];
+    const cDisplay = cTargetItem.note ? `${cTargetItem.name}（${cTargetItem.note}）` : cTargetItem.name;
 
-    if (cancelQty === null || cancelQty >= item.qty) {
-      // 取消全部該品項
-      o.items.splice(idx, 1);
-      // 顯示剩餘訂單
-      const leftItems = o.items.map(i => {
-        const p = i.price !== null ? `${i.price}` : '';
-        const n = i.note ? `（${i.note}）` : '';
-        return `${i.name}${p}×${i.qty}${n}`;
-      });
-      const leftStr = leftItems.length > 0 ? `\n目前訂單：${leftItems.join('、')}` : '\n目前無其他訂單';
-      await replyMessage(replyToken, { type: 'text', text: `已取消：${displayName}${leftStr}` });
+    if (cQty >= cTargetItem.qty) {
+      o.items.splice(cidx, 1);
+      await replyMessage(replyToken, { type: 'text', text: `已取消：${cDisplay}${showLeft(o.items)}` });
     } else {
-      // 取消指定份數
-      const remaining2 = item.qty - cancelQty;
-      item.qty = remaining2;
-      const priceStr = item.price !== null ? `${item.price}` : '';
-      await replyMessage(replyToken, { type: 'text', text: `已取消 ${displayName} ${cancelQty} 份\n目前訂單：${item.name}${priceStr}×${remaining2}` });
+      cTargetItem.qty -= cQty;
+      const cp = cTargetItem.price !== null ? `${cTargetItem.price}` : '';
+      await replyMessage(replyToken, { type: 'text', text: `已取消 ${cDisplay} ${cQty} 份\n目前訂單：${cTargetItem.name}${cp}×${cTargetItem.qty}` });
     }
     return;
   }
