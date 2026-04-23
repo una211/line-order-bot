@@ -217,7 +217,7 @@ function buildSummaryMessages(session, groupId) {
       const priceStr = data.price !== null ? `${data.price}` : '';
       const noteStr = data.note ? `（${data.note}）` : '';
       const names = data.names.join('、');
-      msg1 += `  ${data.name}${priceStr}×${data.qty}${noteStr}（${names}）\n`;
+      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}（${names}）\n`;
       grandQty += data.qty;
     }
   }
@@ -263,7 +263,7 @@ function buildSummaryMessages(session, groupId) {
   for (const [key, data] of Object.entries(allItemMap)) {
     const priceStr = data.price !== null ? `${data.price}` : '';
     const noteStr = data.note ? `（${data.note}）` : '';
-    msg2 += `${data.name}${priceStr}×${data.qty}${noteStr}\n`;
+    msg2 += `${data.name}${noteStr}${priceStr}×${data.qty}\n`;
   }
   msg2 += `\n共 ${totalQty} 份\n總金額：$${totalAmount} 元`;
 
@@ -609,11 +609,18 @@ async function handleMessage(event) {
   雞腿便當 備註 少冰 80
   （開單期間 # 開頭不記錄）
 
-取消
-  取消豬排
-  取消 豬排
-  取消 豬排 2（取消2份）
-  取消全部
+取消（自己）
+  取消雞腿便當（取消1份）
+  取消雞腿便當*2（取消2份）
+  取消所有雞腿便當（取消全部份數）
+  取消我的訂單（取消自己所有）
+
+取消（他人）
+  取消 @小明的雞腿便當
+  取消 @小明的雞腿便當*2
+  取消 @小明的所有訂單
+  取消 @All的雞腿便當（取消所有人）
+  取消 @All的所有訂單
 
 修改
   雞腿便當改60元（改價格）
@@ -688,7 +695,7 @@ async function handleMessage(event) {
     session.orders = {};
     session.deadline = null;
 
-    let replyText = '開始點餐！\n直接輸入餐點即可點餐！\nEX：雞腿便當（飯換菜）80';
+    let replyText = '開始點餐！\n直接輸入餐點即可點餐！\nEX：雞腿便當（飯換菜）$110*3';
 
     if (timeStr) {
       const deadline = parseDeadlineTime(timeStr);
@@ -703,7 +710,7 @@ async function handleMessage(event) {
       }
       session.deadline = deadline;
       session.deadlineTimer = setTimeout(() => autoClose(groupId), msUntil);
-      replyText = `開始點餐！將於 ${formatTime(deadline)} 自動結單\n直接輸入餐點即可點餐！\nEX：雞腿便當（飯換菜）80`;
+      replyText = `開始點餐！將於 ${formatTime(deadline)} 自動結單\n直接輸入餐點即可點餐！\nEX：雞腿便當（飯換菜）$110*3`;
     }
 
     await replyMessage(replyToken, { type: 'text', text: replyText });
@@ -743,7 +750,7 @@ async function handleMessage(event) {
   }
 
   // ── 查看目前訂單 ──
-  if (['目前訂單', '查看訂單', '所有的訂單', '現在的訂單', '全部的訂單', '所有訂單'].includes(text)) {
+  if (['目前訂單', '查看訂單', '所有的訂單', '現在的訂單', '全部的訂單'].includes(text)) {
     const orderUserIds = Object.keys(session.orders).filter(uid => session.orders[uid].items.length > 0);
     if (orderUserIds.length === 0) {
       await replyMessage(replyToken, { type: 'text', text: '目前還沒有人點餐！' });
@@ -773,7 +780,7 @@ async function handleMessage(event) {
   }
 
   // ── 科室分裝便條紙 ──
-  if (text === '科室分裝' || text === '依科室分單') {
+  if (text === '科室分裝' || text === '依科室分單' || text === '科室分單') {
     const slipMsgs = buildSlipMessages(session, groupId);
     await replyMessage(replyToken, slipMsgs);
     return;
