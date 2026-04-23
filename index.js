@@ -361,10 +361,20 @@ function parseDeadlineTime(timeStr) {
   const h = parseInt(match[1]);
   const m = parseInt(match[2]);
   if (h < 0 || h > 23 || m < 0 || m > 59) return null;
-  const now = getTaiwanTime();
-  const deadline = new Date(now);
-  deadline.setHours(h, m, 0, 0);
-  return deadline;
+
+  // 取得現在的 UTC 時間，加上台灣時區偏移（+8小時）計算目標時間
+  const now = new Date();
+  // 台灣時間 = UTC + 8小時
+  const taiwanOffsetMs = 8 * 60 * 60 * 1000;
+  // 計算今天台灣時間的 deadline（UTC）
+  const todayUtcMidnight = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate()
+  ));
+  // 台灣時間的 deadline = 今天 UTC 00:00 - 8小時偏移 + 目標小時分鐘
+  const deadlineUtc = new Date(todayUtcMidnight.getTime() - taiwanOffsetMs + (h * 60 + m) * 60 * 1000);
+  return deadlineUtc;
 }
 
 // ===== 主要訊息處理 =====
