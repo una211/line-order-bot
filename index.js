@@ -880,33 +880,56 @@ async function handleMessage(event) {
   function parseItemAndQty(str) {
     let itemName = str.trim();
     let qty = 1;
-    let filterPrice = null; // 用來過濾特定價格
+    let filterPrice = null;
 
-    // 使用貪婪比對(.+)確保餐點名稱完整，數量在最後
+    // 優先判斷 *數量 格式（明確表示數量）
     const starMatch = itemName.match(/^(.+)\s*[*×xX]\s*(\d+)$/);
     if (starMatch) {
       itemName = starMatch[1].trim();
       qty = parseInt(starMatch[2]);
-    } else {
-      // 支援空格+數字格式：炸豬排 2
-      const spaceMatch = itemName.match(/^(.+)\s+(\d+)$/);
-      if (spaceMatch) {
-        itemName = spaceMatch[1].trim();
-        qty = parseInt(spaceMatch[2]);
+      // 再從名稱結尾抓出價格
+      const pm = itemName.match(/^(.+?)(\d+)$/);
+      if (pm && pm[1].trim().length > 0) {
+        filterPrice = parseInt(pm[2]);
+        itemName = pm[1].trim();
+      }
+      return { itemName, qty, filterPrice };
+    }
+
+    // 判斷結尾有無 *數量 格式以外的數字
+    // 規則：
+    //   炸豬排110    → filterPrice=110（緊接名稱後面的數字是價格）
+    //   炸豬排 110   → filterPrice=110（空格後數字也當價格，不當數量）
+    //   炸豬排 110 2 → filterPrice=110, qty=2（最後一個數字是數量）
+    //   取消 2       → qty=2（純數字當數量）
+
+    // 先看有沒有「名稱 價格 數量」格式
+    const fullMatch = itemName.match(/^(.+?)\s+(\d+)\s+(\d+)$/);
+    if (fullMatch) {
+      itemName = fullMatch[1].trim();
+      filterPrice = parseInt(fullMatch[2]);
+      qty = parseInt(fullMatch[3]);
+      return { itemName, qty, filterPrice };
+    }
+
+    // 名稱緊接價格（無空格）：炸豬排110
+    const noSpacePrice = itemName.match(/^(.+?)(\d+)$/);
+    if (noSpacePrice && noSpacePrice[1].trim().length > 0) {
+      // 確認名稱部分不是純數字
+      const possibleName = noSpacePrice[1].trim();
+      if (/\D/.test(possibleName)) {
+        filterPrice = parseInt(noSpacePrice[2]);
+        itemName = possibleName;
+        return { itemName, qty, filterPrice };
       }
     }
 
-    // 嘗試從名稱結尾抓出價格（用於區分同名不同價）
-    // EX：紅燒虱目魚肚100 → name=紅燒虱目魚肚, filterPrice=100
-    const priceEndMatch = itemName.match(/^(.+?)(\d+)$/);
-    if (priceEndMatch) {
-      // 確認去掉數字後還有名稱才算價格
-      const possibleName = priceEndMatch[1].trim();
-      const possiblePrice = parseInt(priceEndMatch[2]);
-      if (possibleName.length > 0) {
-        filterPrice = possiblePrice;
-        itemName = possibleName;
-      }
+    // 名稱+空格+數字：紅燒虱目魚肚 210 → 當價格不是數量
+    const spacePrice = itemName.match(/^(.+)\s+(\d+)$/);
+    if (spacePrice) {
+      itemName = spacePrice[1].trim();
+      filterPrice = parseInt(spacePrice[2]);
+      return { itemName, qty, filterPrice };
     }
 
     return { itemName, qty, filterPrice };
