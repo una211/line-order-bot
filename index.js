@@ -1068,25 +1068,22 @@ async function handleMessage(event) {
     }
 
     let remaining = text.replace(/^取消\s*/, '').trim();
-    const { itemName: cItem, qty: cQty, filterPrice: cPrice } = parseItemAndQty(remaining);
 
-    // 在搜尋前先處理「無備註」和「無價格」關鍵字
+    // 在 parseItemAndQty 之前先偵測並移除特殊關鍵字
     let noPrice = false;
     let noNote = false;
-    let searchItem = cItem;
 
-    // 移除「無備註」關鍵字
-    if (searchItem.endsWith(' 無備註') || remaining.endsWith(' 無備註')) {
+    if (remaining.endsWith(' 無備註') || remaining === '無備註') {
       noNote = true;
-      searchItem = searchItem.replace(/\s*無備註$/, '').trim();
       remaining = remaining.replace(/\s*無備註$/, '').trim();
     }
-
-    // 移除「無價格」關鍵字
-    if (searchItem.endsWith(' 無價格') || searchItem === '無價格') {
+    if (remaining.endsWith(' 無價格') || remaining === '無價格') {
       noPrice = true;
-      searchItem = searchItem.replace(/\s*無價格$/, '').trim();
+      remaining = remaining.replace(/\s*無價格$/, '').trim();
     }
+
+    const { itemName: cItem, qty: cQty, filterPrice: cPrice } = parseItemAndQty(remaining);
+    let searchItem = cItem;
 
     // 找出所有符合的品項（先完全符合，再包含比對）
     let matchedIdxs = [];
@@ -1104,7 +1101,7 @@ async function handleMessage(event) {
     if (noNote) {
       const noNoteFiltered = matchedIdxs.filter(idx => !o.items[idx].note);
       if (noNoteFiltered.length === 0) {
-        await replyMessage(replyToken, { type: 'text', text: `找不到無備註的「${searchItem}」。` });
+        await replyMessage(replyToken, { type: 'text', text: `找不到無備註的「${searchItem}」，請輸入「我的訂單」確認。` });
         return;
       }
       matchedIdxs = noNoteFiltered;
@@ -1114,7 +1111,7 @@ async function handleMessage(event) {
     if (noPrice) {
       const nopriceFiltered = matchedIdxs.filter(idx => o.items[idx].price === null);
       if (nopriceFiltered.length === 0) {
-        await replyMessage(replyToken, { type: 'text', text: `找不到無價格的「${searchItem}」。` });
+        await replyMessage(replyToken, { type: 'text', text: `找不到無價格的「${searchItem}」，請輸入「我的訂單」確認。` });
         return;
       }
       matchedIdxs = nopriceFiltered;
