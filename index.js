@@ -946,14 +946,21 @@ async function handleMessage(event) {
     const targetName = cancelPersonMatch[1].trim();
     const targetItem = cancelPersonMatch[2].trim();
 
-    // 找到目標人的 userId（比對 LINE 名稱）
+    // 找到目標人的 userId（只比對 LINE 原本名稱）
     let targetUid = null;
     for (const uid of Object.keys(session.orders)) {
-      const lineName = await getMemberName(groupId, uid);
-      if (lineName === targetName || session.orders[uid].name === targetName) {
-        targetUid = uid;
-        break;
-      }
+      try {
+        const url = groupId
+          ? `https://api.line.me/v2/bot/group/${groupId}/member/${uid}`
+          : `https://api.line.me/v2/profile/${uid}`;
+        const res = await axios.get(url, {
+          headers: { 'Authorization': `Bearer ${CHANNEL_ACCESS_TOKEN}` }
+        });
+        if (res.data.displayName === targetName) {
+          targetUid = uid;
+          break;
+        }
+      } catch { continue; }
     }
 
     if (!targetUid) {
