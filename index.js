@@ -1118,22 +1118,26 @@ async function handleMessage(event) {
       if (priceFiltered.length > 0) matchedIdxs = priceFiltered;
     }
 
-    // 若還是有多筆（不同價格或不同備註），顯示清單提示
+    // 若還是有多筆（相同價格但不同備註），顯示清單提示
     if (matchedIdxs.length > 1) {
-      let listStr = `找到 ${matchedIdxs.length} 筆「${searchItem}」，請輸入完整品項取消：
+      let listStr = `找到 ${matchedIdxs.length} 筆「${searchItem}」，請加備註區分：
 `;
+      const exLines = [];
       matchedIdxs.forEach((idx, i) => {
         const it = o.items[idx];
         const priceStr = it.price !== null ? `${it.price}` : '無價格';
-        const noteStr = it.note ? `（${it.note}）` : '';
+        const noteStr = it.note ? `（${it.note}）` : '（無備註）';
         listStr += `  ${i + 1}. ${it.name}${noteStr} ${priceStr}
 `;
+        // 產生對應的取消指令
+        const exNote = it.note ? `（${it.note}）` : ' 無備註';
+        const exPrice = it.price !== null ? `${it.price}` : ' 無價格';
+        exLines.push(`取消 ${it.name}${exNote}${exPrice}`);
       });
-      const ex = o.items[matchedIdxs[0]];
-      const exPrice = ex.price !== null ? `${ex.price}` : ' 無價格';
-      const exNote = ex.note ? `（${ex.note}）` : '';
       listStr += `
-EX：取消 ${ex.name}${exNote}${exPrice}`;
+EX：
+${exLines.map(e => `  ${e}`).join('
+')}`;
       await replyMessage(replyToken, { type: 'text', text: listStr });
       return;
     }
@@ -1144,13 +1148,13 @@ EX：取消 ${ex.name}${exNote}${exPrice}`;
 
     if (cQty >= cTargetItem.qty) {
       o.items.splice(cidx, 1);
-      await replyMessage(replyToken, { type: 'text', text: `已取消：${cDisplay}${showLeft(o.items)}` });
     } else {
       cTargetItem.qty -= cQty;
-      const cp = cTargetItem.price !== null ? `${cTargetItem.price}` : '';
-      await replyMessage(replyToken, { type: 'text', text: `已取消 ${cDisplay} ${cQty} 份
-目前訂單：${cTargetItem.name}${cp}×${cTargetItem.qty}` });
     }
+
+    // 統一顯示完整剩餘訂單
+    const cancelMsg = cQty > 1 ? `已取消 ${cDisplay} ${cQty} 份` : `已取消：${cDisplay}`;
+    await replyMessage(replyToken, { type: 'text', text: `${cancelMsg}${showLeft(o.items)}` });
     return;
   }
 
