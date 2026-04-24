@@ -1120,24 +1120,27 @@ async function handleMessage(event) {
 
     // 若還是有多筆（相同價格但不同備註），顯示清單提示
     if (matchedIdxs.length > 1) {
-      let listStr = `找到 ${matchedIdxs.length} 筆「${searchItem}」，請加備註區分：
-`;
+      const lines = [];
       const exLines = [];
       matchedIdxs.forEach((idx, i) => {
         const it = o.items[idx];
-        const priceStr = it.price !== null ? `${it.price}` : '無價格';
+        const priceStr = it.price !== null ? String(it.price) : '無價格';
         const noteStr = it.note ? `（${it.note}）` : '（無備註）';
-        listStr += `  ${i + 1}. ${it.name}${noteStr} ${priceStr}
-`;
-        // 產生對應的取消指令
+        lines.push(`  ${i + 1}. ${it.name}${noteStr} ${priceStr}`);
         const exNote = it.note ? `（${it.note}）` : ' 無備註';
-        const exPrice = it.price !== null ? `${it.price}` : ' 無價格';
-        exLines.push(`取消 ${it.name}${exNote}${exPrice}`);
+        const exPrice = it.price !== null ? String(it.price) : ' 無價格';
+        exLines.push(`  取消 ${it.name}${exNote}${exPrice}`);
       });
-      listStr += `
-EX：
-${exLines.map(e => `  ${e}`).join('
-')}`;
+      const listStr = [
+        `找到 ${matchedIdxs.length} 筆「${searchItem}」，請加備註或價格區分：`,
+        lines.join('
+'),
+        '',
+        'EX：',
+        exLines.join('
+')
+      ].join('
+');
       await replyMessage(replyToken, { type: 'text', text: listStr });
       return;
     }
