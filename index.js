@@ -182,12 +182,13 @@ function buildSummaryMessages(session, groupId) {
 
   // 計算科室內依餐點彙整
   function buildDeptSection(members) {
-    // 把同科室的餐點整理：{ "餐點名稱（備註）": { name, note, price, qty, names[] } }
+    // 把同科室的餐點整理：key 包含名稱、備註、價格，三者都相同才合併
     const itemMap = {};
     for (const m of members) {
       for (const item of m.items) {
-        // key 包含備註，確保備註不同的餐點分開統計
-        const key = item.note ? `${item.name}（${item.note}）` : item.name;
+        const priceKey = item.price !== null ? item.price : 'null';
+        const noteKey = item.note || '';
+        const key = `${item.name}||${noteKey}||${priceKey}`;
         if (!itemMap[key]) itemMap[key] = { name: item.name, note: item.note || null, price: item.price, qty: 0, names: [] };
         itemMap[key].qty += item.qty;
         if (!itemMap[key].names.includes(m.name)) {
@@ -238,22 +239,21 @@ function buildSummaryMessages(session, groupId) {
 
   msg1 += `\n共 ${grandQty} 份\n總金額：$${grandTotal} 元`;
 
-  // ===== 第2則：依餐點統計（含備註）=====
+  // ===== 第2則：依餐點統計（含備註、價格不同分開統計）=====
   const allItemMap = {};
   let totalQty = 0;
   let totalAmount = 0;
 
   for (const uid of userIds) {
     for (const item of orders[uid].items) {
-      // key 包含備註，備註不同的分開統計
-      const key = item.note ? `${item.name}（${item.note}）` : item.name;
+      // key 包含名稱、備註、價格，三者都相同才合併
+      const priceKey = item.price !== null ? item.price : 'null';
+      const noteKey = item.note || '';
+      const key = `${item.name}||${noteKey}||${priceKey}`;
       if (!allItemMap[key]) {
         allItemMap[key] = { name: item.name, note: item.note || null, price: item.price, qty: 0 };
       }
       allItemMap[key].qty += item.qty;
-      if (item.price !== null && allItemMap[key].price === null) {
-        allItemMap[key].price = item.price;
-      }
       totalQty += item.qty;
       totalAmount += item.price !== null ? item.price * item.qty : 0;
     }
@@ -305,11 +305,11 @@ function buildSlipMessages(session, groupId) {
     const itemMap = {};
     for (const m of members) {
       for (const item of m.items) {
-        if (!itemMap[item.name]) itemMap[item.name] = { price: item.price, qty: 0 };
-        itemMap[item.name].qty += item.qty;
-        if (item.price !== null && itemMap[item.name].price === null) {
-          itemMap[item.name].price = item.price;
-        }
+        const priceKey = item.price !== null ? item.price : 'null';
+        const noteKey = item.note || '';
+        const key = `${item.name}||${noteKey}||${priceKey}`;
+        if (!itemMap[key]) itemMap[key] = { name: item.name, note: item.note || null, price: item.price, qty: 0 };
+        itemMap[key].qty += item.qty;
       }
     }
     return itemMap;
@@ -321,9 +321,10 @@ function buildSlipMessages(session, groupId) {
   for (const [dept, members] of Object.entries(deptMap)) {
     const itemMap = buildDeptItemMap(members);
     msg += `第${deptIndex}張單（${dept}）\n`;
-    for (const [itemName, data] of Object.entries(itemMap)) {
+    for (const [key, data] of Object.entries(itemMap)) {
       const priceStr = data.price !== null ? `${data.price}` : '';
-      msg += `${itemName}${priceStr}×${data.qty}\n`;
+      const noteStr = data.note ? `（${data.note}）` : '';
+      msg += `${data.name}${noteStr}${priceStr}×${data.qty}\n`;
     }
     msg += '\n';
     deptIndex++;
@@ -332,9 +333,10 @@ function buildSlipMessages(session, groupId) {
   if (noDept.length > 0) {
     const itemMap = buildDeptItemMap(noDept);
     msg += `第${deptIndex}張單（未設定科室）\n`;
-    for (const [itemName, data] of Object.entries(itemMap)) {
+    for (const [key, data] of Object.entries(itemMap)) {
       const priceStr = data.price !== null ? `${data.price}` : '';
-      msg += `${itemName}${priceStr}×${data.qty}\n`;
+      const noteStr = data.note ? `（${data.note}）` : '';
+      msg += `${data.name}${noteStr}${priceStr}×${data.qty}\n`;
     }
   }
 
@@ -877,10 +879,18 @@ async function handleMessage(event) {
   function parseItemAndQty(str) {
     let itemName = str.trim();
     let qty = 1;
-    const starMatch = itemName.match(/^(.+?)\s*[*×xX]\s*(\d+)$/);
+    // 使用貪婪比對(.+)確保餐點名稱完整，數量在最後
+    const starMatch = itemName.match(/^(.+)\s*[*×xX]\s*(\d+)$/);
     if (starMatch) {
       itemName = starMatch[1].trim();
       qty = parseInt(starMatch[2]);
+    } else {
+      // 支援空格+數字格式：炸豬排 2
+      const spaceMatch = itemName.match(/^(.+)\s+(\d+)$/);
+      if (spaceMatch) {
+        itemName = spaceMatch[1].trim();
+        qty = parseInt(spaceMatch[2]);
+      }
     }
     return { itemName, qty };
   }
@@ -909,14 +919,19 @@ async function handleMessage(event) {
     } else {
       const { itemName: allItem } = parseItemAndQty(target);
       let total = 0;
+      const affectedNames = [];
       for (const uid of Object.keys(session.orders)) {
         const o2 = session.orders[uid];
         let i2 = o2.items.findIndex(i => i.name === allItem);
         if (i2 === -1) i2 = o2.items.findIndex(i => i.name.includes(allItem));
-        if (i2 !== -1) { o2.items.splice(i2, 1); total++; }
+        if (i2 !== -1) {
+          affectedNames.push(o2.name);
+          o2.items.splice(i2, 1);
+          total++;
+        }
       }
       if (total > 0) {
-        await replyMessage(replyToken, { type: 'text', text: `已取消所有人的「${allItem}」，共 ${total} 人受影響。` });
+        await replyMessage(replyToken, { type: 'text', text: `已取消所有人的「${allItem}」\n受影響（${total}人）：${affectedNames.join('、')}` });
       } else {
         await replyMessage(replyToken, { type: 'text', text: `找不到「${allItem}」，沒有人點這道。` });
       }
