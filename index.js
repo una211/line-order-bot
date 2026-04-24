@@ -229,10 +229,11 @@ function buildSummaryMessages(session, groupId) {
     const deptTotal = calcDeptTotal(itemMap);
     grandTotal += deptTotal;
     msg1 += `\n未設定科室　小計 $${deptTotal}\n`;
-    for (const [itemName, data] of Object.entries(itemMap)) {
-      const priceStr = data.price !== null ? `${data.price}` : '0';
+    for (const [key, data] of Object.entries(itemMap)) {
+      const priceStr = data.price !== null ? `${data.price}` : '';
+      const noteStr = data.note ? `（${data.note}）` : '';
       const names = data.names.join('、');
-      msg1 += `  ${itemName}${priceStr}×${data.qty}（${names}）\n`;
+      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}（${names}）\n`;
       grandQty += data.qty;
     }
   }
