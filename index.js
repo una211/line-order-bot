@@ -1070,12 +1070,22 @@ async function handleMessage(event) {
     let remaining = text.replace(/^取消\s*/, '').trim();
     const { itemName: cItem, qty: cQty, filterPrice: cPrice } = parseItemAndQty(remaining);
 
-    // 檢查是否有「無價格」關鍵字
+    // 在搜尋前先處理「無備註」和「無價格」關鍵字
     let noPrice = false;
+    let noNote = false;
     let searchItem = cItem;
-    if (cItem.endsWith(' 無價格') || cItem === '無價格') {
+
+    // 移除「無備註」關鍵字
+    if (searchItem.endsWith(' 無備註') || remaining.endsWith(' 無備註')) {
+      noNote = true;
+      searchItem = searchItem.replace(/\s*無備註$/, '').trim();
+      remaining = remaining.replace(/\s*無備註$/, '').trim();
+    }
+
+    // 移除「無價格」關鍵字
+    if (searchItem.endsWith(' 無價格') || searchItem === '無價格') {
       noPrice = true;
-      searchItem = cItem.replace(/\s*無價格$/, '').trim();
+      searchItem = searchItem.replace(/\s*無價格$/, '').trim();
     }
 
     // 找出所有符合的品項（先完全符合，再包含比對）
@@ -1090,7 +1100,17 @@ async function handleMessage(event) {
       return;
     }
 
-    // 若指定「無價格」，過濾出無價格的品項
+    // 過濾無備註
+    if (noNote) {
+      const noNoteFiltered = matchedIdxs.filter(idx => !o.items[idx].note);
+      if (noNoteFiltered.length === 0) {
+        await replyMessage(replyToken, { type: 'text', text: `找不到無備註的「${searchItem}」。` });
+        return;
+      }
+      matchedIdxs = noNoteFiltered;
+    }
+
+    // 過濾無價格
     if (noPrice) {
       const nopriceFiltered = matchedIdxs.filter(idx => o.items[idx].price === null);
       if (nopriceFiltered.length === 0) {
@@ -1098,18 +1118,6 @@ async function handleMessage(event) {
         return;
       }
       matchedIdxs = nopriceFiltered;
-    }
-
-    // 若指定「無備註」，過濾出無備註的品項
-    let noNote = false;
-    if (searchItem.endsWith(' 無備註') || remaining.endsWith(' 無備註')) {
-      noNote = true;
-      searchItem = searchItem.replace(/\s*無備註$/, '').trim();
-      matchedIdxs = matchedIdxs.filter(idx => !o.items[idx].note);
-      if (matchedIdxs.length === 0) {
-        await replyMessage(replyToken, { type: 'text', text: `找不到無備註的「${searchItem}」。` });
-        return;
-      }
     }
 
     // 若有多筆，先用價格過濾
