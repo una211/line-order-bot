@@ -1045,16 +1045,77 @@ async function handleMessage(event) {
     }
 
     let remaining = text.replace(/^取消\s*/, '').trim();
-    const { itemName: cItem, qty: cQty } = parseItemAndQty(remaining);
+    const { itemName: cItem, qty: cQty, filterPrice: cPrice } = parseItemAndQty(remaining);
 
-    let cidx = o.items.findIndex(i => i.name === cItem);
-    if (cidx === -1) cidx = o.items.findIndex(i => i.name.includes(cItem));
+    // 檢查是否有「無價格」關鍵字
+    let noPrice = false;
+    let searchItem = cItem;
+    if (cItem.endsWith(' 無價格') || cItem === '無價格') {
+      noPrice = true;
+      searchItem = cItem.replace(/\s*無價格$/, '').trim();
+    }
 
-    if (cidx === -1) {
-      await replyMessage(replyToken, { type: 'text', text: `找不到「${cItem}」，請輸入「我的訂單」確認品項名稱。` });
+    // 找出所有符合的品項（先完全符合，再包含比對）
+    let matchedIdxs = [];
+    o.items.forEach((i, idx) => { if (i.name === searchItem) matchedIdxs.push(idx); });
+    if (matchedIdxs.length === 0) {
+      o.items.forEach((i, idx) => { if (i.name.includes(searchItem)) matchedIdxs.push(idx); });
+    }
+
+    if (matchedIdxs.length === 0) {
+      await replyMessage(replyToken, { type: 'text', text: `找不到「${searchItem}」，請輸入「我的訂單」確認品項名稱。` });
       return;
     }
 
+    // 若指定「無價格」，過濾出無價格的品項
+    if (noPrice) {
+      const nopriceFiltered = matchedIdxs.filter(idx => o.items[idx].price === null);
+      if (nopriceFiltered.length === 0) {
+        await replyMessage(replyToken, { type: 'text', text: `找不到無價格的「${searchItem}」。` });
+        return;
+      }
+      matchedIdxs = nopriceFiltered;
+    }
+
+    // 若指定「無備註」，過濾出無備註的品項
+    let noNote = false;
+    if (searchItem.endsWith(' 無備註') || remaining.endsWith(' 無備註')) {
+      noNote = true;
+      searchItem = searchItem.replace(/\s*無備註$/, '').trim();
+      matchedIdxs = matchedIdxs.filter(idx => !o.items[idx].note);
+      if (matchedIdxs.length === 0) {
+        await replyMessage(replyToken, { type: 'text', text: `找不到無備註的「${searchItem}」。` });
+        return;
+      }
+    }
+
+    // 若有多筆，先用價格過濾
+    if (!noPrice && matchedIdxs.length > 1 && cPrice !== null) {
+      const priceFiltered = matchedIdxs.filter(idx => o.items[idx].price === cPrice);
+      if (priceFiltered.length > 0) matchedIdxs = priceFiltered;
+    }
+
+    // 若還是有多筆（不同價格或不同備註），顯示清單提示
+    if (matchedIdxs.length > 1) {
+      let listStr = `找到 ${matchedIdxs.length} 筆「${searchItem}」，請輸入完整品項取消：
+`;
+      matchedIdxs.forEach((idx, i) => {
+        const it = o.items[idx];
+        const priceStr = it.price !== null ? `${it.price}` : '無價格';
+        const noteStr = it.note ? `（${it.note}）` : '';
+        listStr += `  ${i + 1}. ${it.name}${noteStr} ${priceStr}
+`;
+      });
+      const ex = o.items[matchedIdxs[0]];
+      const exPrice = ex.price !== null ? `${ex.price}` : ' 無價格';
+      const exNote = ex.note ? `（${ex.note}）` : '';
+      listStr += `
+EX：取消 ${ex.name}${exNote}${exPrice}`;
+      await replyMessage(replyToken, { type: 'text', text: listStr });
+      return;
+    }
+
+    const cidx = matchedIdxs[0];
     const cTargetItem = o.items[cidx];
     const cDisplay = cTargetItem.note ? `${cTargetItem.name}（${cTargetItem.note}）` : cTargetItem.name;
 
@@ -1064,7 +1125,8 @@ async function handleMessage(event) {
     } else {
       cTargetItem.qty -= cQty;
       const cp = cTargetItem.price !== null ? `${cTargetItem.price}` : '';
-      await replyMessage(replyToken, { type: 'text', text: `已取消 ${cDisplay} ${cQty} 份\n目前訂單：${cTargetItem.name}${cp}×${cTargetItem.qty}` });
+      await replyMessage(replyToken, { type: 'text', text: `已取消 ${cDisplay} ${cQty} 份
+目前訂單：${cTargetItem.name}${cp}×${cTargetItem.qty}` });
     }
     return;
   }
