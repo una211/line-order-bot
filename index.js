@@ -1133,14 +1133,11 @@ async function handleMessage(event) {
       });
       const listStr = [
         `找到 ${matchedIdxs.length} 筆「${searchItem}」，請加備註或價格區分：`,
-        lines.join('
-'),
+        lines.join('\n'),
         '',
         'EX：',
-        exLines.join('
-')
-      ].join('
-');
+        exLines.join('\n')
+      ].join('\n');
       await replyMessage(replyToken, { type: 'text', text: listStr });
       return;
     }
