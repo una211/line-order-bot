@@ -1083,13 +1083,38 @@ async function handleMessage(event) {
     }
 
     const { itemName: cItem, qty: cQty, filterPrice: cPrice } = parseItemAndQty(remaining);
+
+    // 從 cItem 中抽取備註（如果有括號）
     let searchItem = cItem;
+    let searchNote = null;
+    const bracketInSearch = searchItem.match(/^(.+?)[（(]([^）)]+)[）)]$/);
+    if (bracketInSearch) {
+      searchItem = bracketInSearch[1].trim();
+      searchNote = bracketInSearch[2].trim();
+    }
 
     // 找出所有符合的品項（先完全符合，再包含比對）
     let matchedIdxs = [];
-    o.items.forEach((i, idx) => { if (i.name === searchItem) matchedIdxs.push(idx); });
+    // 完全符合名稱（且備註也符合，若有指定備註）
+    o.items.forEach((i, idx) => {
+      if (i.name === searchItem) {
+        if (searchNote === null || i.note === searchNote) matchedIdxs.push(idx);
+      }
+    });
+    // 包含比對
     if (matchedIdxs.length === 0) {
-      o.items.forEach((i, idx) => { if (i.name.includes(searchItem)) matchedIdxs.push(idx); });
+      o.items.forEach((i, idx) => {
+        if (i.name.includes(searchItem)) {
+          if (searchNote === null || (i.note && i.note.includes(searchNote))) matchedIdxs.push(idx);
+        }
+      });
+    }
+    // 若有指定備註但找不到，再試不帶備註搜尋
+    if (matchedIdxs.length === 0 && searchNote !== null) {
+      o.items.forEach((i, idx) => { if (i.name === searchItem) matchedIdxs.push(idx); });
+      if (matchedIdxs.length === 0) {
+        o.items.forEach((i, idx) => { if (i.name.includes(searchItem)) matchedIdxs.push(idx); });
+      }
     }
 
     if (matchedIdxs.length === 0) {
