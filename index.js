@@ -880,6 +880,8 @@ async function handleMessage(event) {
   function parseItemAndQty(str) {
     let itemName = str.trim();
     let qty = 1;
+    let filterPrice = null; // 用來過濾特定價格
+
     // 使用貪婪比對(.+)確保餐點名稱完整，數量在最後
     const starMatch = itemName.match(/^(.+)\s*[*×xX]\s*(\d+)$/);
     if (starMatch) {
@@ -893,7 +895,21 @@ async function handleMessage(event) {
         qty = parseInt(spaceMatch[2]);
       }
     }
-    return { itemName, qty };
+
+    // 嘗試從名稱結尾抓出價格（用於區分同名不同價）
+    // EX：紅燒虱目魚肚100 → name=紅燒虱目魚肚, filterPrice=100
+    const priceEndMatch = itemName.match(/^(.+?)(\d+)$/);
+    if (priceEndMatch) {
+      // 確認去掉數字後還有名稱才算價格
+      const possibleName = priceEndMatch[1].trim();
+      const possiblePrice = parseInt(priceEndMatch[2]);
+      if (possibleName.length > 0) {
+        filterPrice = possiblePrice;
+        itemName = possibleName;
+      }
+    }
+
+    return { itemName, qty, filterPrice };
   }
 
   // ── 取消我的訂單（自己所有）──
