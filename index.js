@@ -552,23 +552,34 @@ async function handleMessage(event) {
     return;
   }
 
-  // ── 設定科室（自己）──
-  if (text.startsWith('設定科室') && !text.match(/設定科室\s+\S+\s+\S+/)) {
-    const dept = text.replace('設定科室', '').trim();
-    if (!dept) {
-      await replyMessage(replyToken, { type: 'text', text: '請輸入科室名稱，例：設定科室 行政部' });
+  // ── 設定科室 ──
+  // 格式一：設定科室 行政部（自己）
+  // 格式二：設定科室 阿明 行政部（幫別人，最後一個詞是科室）
+  if (text.startsWith('設定科室')) {
+    const remaining = text.replace('設定科室', '').trim();
+    if (!remaining) {
+      await replyMessage(replyToken, { type: 'text', text: '請輸入科室名稱，例：\n設定科室 行政部（自己）\n設定科室 阿明 行政部（幫別人）' });
       return;
     }
-    depts[userId] = dept;
-    // 同步更新訂單裡的科室和名稱（確保使用代號而非原本LINE名稱）
-    const name = await getMemberName(groupId, userId);
-    if (session.orders[userId]) {
-      session.orders[userId].dept = dept;
-      session.orders[userId].name = name;
+    const parts = remaining.split(/\s+/);
+    if (parts.length === 1) {
+      // 只有一個參數 → 設定自己的科室
+      const dept = parts[0];
+      depts[userId] = dept;
+      const name = await getMemberName(groupId, userId);
+      if (session.orders[userId]) {
+        session.orders[userId].dept = dept;
+        session.orders[userId].name = name;
+      }
+      await saveDept(groupId, userId, dept);
+      await replyMessage(replyToken, { type: 'text', text: `已設定 ${name} 的科室為「${dept}」` });
+    } else {
+      // 兩個以上參數 → 幫別人設定科室
+      const dept = parts[parts.length - 1];
+      const lineName = parts.slice(0, parts.length - 1).join(' ');
+      pendingDepts[lineName] = dept;
+      await replyMessage(replyToken, { type: 'text', text: `已預設「${lineName}」的科室為「${dept}」\n等 ${lineName} 點餐後自動綁定！` });
     }
-    // 儲存到 MongoDB
-    await saveDept(groupId, userId, dept);
-    await replyMessage(replyToken, { type: 'text', text: `已設定 ${name} 的科室為「${dept}」` });
     return;
   }
 
@@ -704,27 +715,27 @@ async function handleMessage(event) {
   開單 11:30
   開始點餐 11:30
   開始訂餐 11:30
+  11:30結單（同時開單）
   （不附時間則手動結單）
 
 點餐（開單後直接輸入）
   雞腿便當 80
-  雞腿便當80*2
   雞腿便當$80*2
   雞腿便當（少冰）80
   雞腿便當 備註 少冰 80
-  （開單期間 # 開頭不記錄）
+  （# 開頭不記錄）
 
 取消（自己）
   取消雞腿便當（取消1份）
   取消雞腿便當*2（取消2份）
   取消所有雞腿便當（取消全部份數）
-  取消我的訂單（取消自己所有）
+  取消我的訂單
+  取消我的餐點
 
 取消（他人）
   取消 @小明的雞腿便當
-  取消 @小明的雞腿便當*2
-  取消 @小明的所有訂單
-  取消 @All的雞腿便當（取消所有人）
+  取消 @小明 雞腿便當
+  取消 @All的雞腿便當
   取消 @All的所有訂單
 
 修改
@@ -749,11 +760,22 @@ async function handleMessage(event) {
   結單
   11:30結單
 
+科室分裝
+  科室分裝
+  依科室分單
+  科室分單
+
 科室設定
   設定科室 行政部（自己）
-  阿明是行政部（幫別人設定）
-  阿明 行政部（未開單時）
+  設定科室 阿明 行政部（幫別人）
   查看科室
+
+代號設定
+  我的代號 小明
+  設定代號 小明
+  設定代號 陳大明 小明（幫別人）
+  陳大明的代號是小明
+  查看代號
 
 批次設定（用/分隔）
   批次設定科室
@@ -767,13 +789,7 @@ async function handleMessage(event) {
   批次設定科室+代號
   陳小明/行政部/Tina
   王貞（小詠）/業務部/棠棠
-  小宇/業務部（無代號）
-
-代號設定
-  我的代號 小明
-  設定代號 小明
-  設定代號 很長的LINE名稱 小明（幫別人設定）
-  查看代號`;
+  小宇/業務部（無代號）`;
     await replyMessage(replyToken, { type: 'text', text: help });
     return;
   }
