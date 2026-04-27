@@ -53,9 +53,27 @@ async function loadFromDB() {
       if (!nicknameSettings[doc.groupId]) nicknameSettings[doc.groupId] = {};
       nicknameSettings[doc.groupId][doc.userId] = doc.value;
     }
-    console.log('資料載入完成！');
+    console.log(`資料載入完成！科室設定 ${depts.length} 筆，代號設定 ${nicknames.length} 筆`);
   } catch (e) {
     console.error('載入資料失敗：', e.message);
+  }
+}
+
+async function deleteDept(groupId, userId) {
+  if (!db) return;
+  try {
+    await db.collection('settings').deleteOne({ type: 'dept', groupId, userId });
+  } catch (e) {
+    console.error('刪除科室失敗：', e.message);
+  }
+}
+
+async function deleteNickname(groupId, userId) {
+  if (!db) return;
+  try {
+    await db.collection('settings').deleteOne({ type: 'nickname', groupId, userId });
+  } catch (e) {
+    console.error('刪除代號失敗：', e.message);
   }
 }
 
@@ -495,6 +513,7 @@ async function handleMessage(event) {
       const nickname = parts[0];
       nicknames[userId] = nickname;
       if (session.orders[userId]) session.orders[userId].name = nickname;
+      await saveNickname(groupId, userId, nickname);
       await replyMessage(replyToken, { type: 'text', text: `已設定你的代號為「${nickname}」` });
       return;
     } else {
@@ -1339,6 +1358,7 @@ async function handleMessage(event) {
   // 檢查是否有待綁定的暱稱設定
   if (!nicknames[userId] && pendingNicknames[lineName]) {
     nicknames[userId] = pendingNicknames[lineName];
+    await saveNickname(groupId, userId, nicknames[userId]);
     delete pendingNicknames[lineName];
   }
 
@@ -1354,9 +1374,11 @@ async function handleMessage(event) {
   if (!depts[userId]) {
     if (pendingDepts[name]) {
       depts[userId] = pendingDepts[name];
+      await saveDept(groupId, userId, depts[userId]);
       delete pendingDepts[name];
     } else if (pendingDepts[lineName]) {
       depts[userId] = pendingDepts[lineName];
+      await saveDept(groupId, userId, depts[userId]);
       delete pendingDepts[lineName];
     }
   }
