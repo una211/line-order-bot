@@ -1093,6 +1093,8 @@ async function handleMessage(event) {
     if (bm2) { searchNote = bm2[2].trim(); str = (bm2[1] + bm2[3]).trim(); }
 
     // 步驟4：移除價格（結尾數字，名稱需含非數字字元）
+    // 先移除 $ 符號避免干擾比對
+    str = str.replace(/\$/g, '').trim();
     if (!noPrice) {
       const pm2 = str.match(/^(.+?)\s*(\d+)$/);
       if (pm2 && /\D/.test(pm2[1].trim())) { cPrice = parseInt(pm2[2]); str = pm2[1].trim(); }
