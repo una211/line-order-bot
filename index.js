@@ -144,7 +144,8 @@ function parseOrderText(text) {
   // 抓價格（支援空格或$符號後接數字）
   // 麵線$50、麵線 50、麵線 $50
   const priceMatch = itemName.match(/^(.+?)\s*\$(\d+)$/) ||
-                     itemName.match(/^(.+?)\s+(\d+)$/);
+                     itemName.match(/^(.+?)\s+(\d+)$/) ||
+                     itemName.match(/^(.+[^\d])(\d+)$/);  // 名稱結尾緊接數字（無空格無$）
   if (priceMatch) {
     itemName = priceMatch[1].trim();
     price = parseInt(priceMatch[2]);
