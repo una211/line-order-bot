@@ -1,6 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const axios = require('axios');
+const { MongoClient } = require('mongodb');
 
 const app = express();
 
@@ -10,6 +11,7 @@ const CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN || '';
 const ALLOWED_GROUP_IDS = process.env.ALLOWED_GROUP_IDS
   ? process.env.ALLOWED_GROUP_IDS.split(',').map(id => id.trim())
   : [];
+const MONGODB_URI = process.env.MONGODB_URI || '';
 
 // ===== 資料儲存 =====
 const sessions = {};
@@ -17,6 +19,74 @@ const deptSettings = {};
 const pendingDeptSettings = {};
 const nicknameSettings = {};
 const pendingNicknameSettings = {};
+
+// ===== MongoDB 連線 =====
+let db = null;
+async function connectDB() {
+  if (!MONGODB_URI) {
+    console.log('未設定 MONGODB_URI，使用記憶體儲存');
+    return;
+  }
+  try {
+    const client = new MongoClient(MONGODB_URI);
+    await client.connect();
+    db = client.db('line-order-bot');
+    console.log('MongoDB 連線成功！');
+    await loadFromDB();
+  } catch (e) {
+    console.error('MongoDB 連線失敗：', e.message);
+  }
+}
+
+async function loadFromDB() {
+  if (!db) return;
+  try {
+    // 載入科室設定
+    const depts = await db.collection('settings').find({ type: 'dept' }).toArray();
+    for (const doc of depts) {
+      if (!deptSettings[doc.groupId]) deptSettings[doc.groupId] = {};
+      deptSettings[doc.groupId][doc.userId] = doc.value;
+    }
+    // 載入代號設定
+    const nicknames = await db.collection('settings').find({ type: 'nickname' }).toArray();
+    for (const doc of nicknames) {
+      if (!nicknameSettings[doc.groupId]) nicknameSettings[doc.groupId] = {};
+      nicknameSettings[doc.groupId][doc.userId] = doc.value;
+    }
+    console.log('資料載入完成！');
+  } catch (e) {
+    console.error('載入資料失敗：', e.message);
+  }
+}
+
+async function saveDept(groupId, userId, dept) {
+  if (!db) return;
+  try {
+    await db.collection('settings').updateOne(
+      { type: 'dept', groupId, userId },
+      { $set: { type: 'dept', groupId, userId, value: dept } },
+      { upsert: true }
+    );
+  } catch (e) {
+    console.error('儲存科室失敗：', e.message);
+  }
+}
+
+async function saveNickname(groupId, userId, nickname) {
+  if (!db) return;
+  try {
+    await db.collection('settings').updateOne(
+      { type: 'nickname', groupId, userId },
+      { $set: { type: 'nickname', groupId, userId, value: nickname } },
+      { upsert: true }
+    );
+  } catch (e) {
+    console.error('儲存代號失敗：', e.message);
+  }
+}
+
+// 啟動時連線 MongoDB
+connectDB();
 
 // ===== 台灣時間 =====
 function getTaiwanTime() {
@@ -475,8 +545,10 @@ async function handleMessage(event) {
     const name = await getMemberName(groupId, userId);
     if (session.orders[userId]) {
       session.orders[userId].dept = dept;
-      session.orders[userId].name = name; // 同步更新名稱（可能是代號）
+      session.orders[userId].name = name;
     }
+    // 儲存到 MongoDB
+    await saveDept(groupId, userId, dept);
     await replyMessage(replyToken, { type: 'text', text: `已設定 ${name} 的科室為「${dept}」` });
     return;
   }
