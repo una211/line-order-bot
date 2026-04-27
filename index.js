@@ -1067,54 +1067,47 @@ async function handleMessage(event) {
       return;
     }
 
-    let remaining = text.replace(/^取消\s*/, '').trim();
-
-    // 在 parseItemAndQty 之前先偵測並移除特殊關鍵字
+    // 全新解析器：穩固處理所有取消格式
+    let str = text.replace(/^取消\s*/, '').trim();
     let noPrice = false;
     let noNote = false;
-
-    if (remaining.endsWith(' 無備註') || remaining === '無備註') {
-      noNote = true;
-      remaining = remaining.replace(/\s*無備註$/, '').trim();
-    }
-    if (remaining.endsWith(' 無價格') || remaining === '無價格') {
-      noPrice = true;
-      remaining = remaining.replace(/\s*無價格$/, '').trim();
-    }
-
-    const { itemName: cItem, qty: cQty, filterPrice: cPrice } = parseItemAndQty(remaining);
-
-    // 從 cItem 中抽取備註（如果有括號）
-    let searchItem = cItem;
+    let cQty = 1;
+    let cPrice = null;
     let searchNote = null;
-    const bracketInSearch = searchItem.match(/^(.+?)[（(]([^）)]+)[）)]$/);
-    if (bracketInSearch) {
-      searchItem = bracketInSearch[1].trim();
-      searchNote = bracketInSearch[2].trim();
+
+    // 步驟1：移除數量（*N 格式）
+    const qtyMatch2 = str.match(/^(.+?)\s*[*×xX]\s*(\d+)$/);
+    if (qtyMatch2) { str = qtyMatch2[1].trim(); cQty = parseInt(qtyMatch2[2]); }
+
+    // 步驟2：移除特殊關鍵字（while支援任意組合）
+    let kwChanged = true;
+    while (kwChanged) {
+      kwChanged = false;
+      if (/無備註/.test(str)) { noNote = true; str = str.replace(/\s*無備註/, '').trim(); kwChanged = true; }
+      if (/無價格/.test(str)) { noPrice = true; str = str.replace(/\s*無價格/, '').trim(); kwChanged = true; }
     }
 
-    // 找出所有符合的品項（先完全符合，再包含比對）
+    // 步驟3：移除括號備註
+    const bm2 = str.match(/^(.+?)[（(]([^）)]+)[）)](.*)$/);
+    if (bm2) { searchNote = bm2[2].trim(); str = (bm2[1] + bm2[3]).trim(); }
+
+    // 步驟4：移除價格（結尾數字，名稱需含非數字字元）
+    if (!noPrice) {
+      const pm2 = str.match(/^(.+?)\s*(\d+)$/);
+      if (pm2 && /\D/.test(pm2[1].trim())) { cPrice = parseInt(pm2[2]); str = pm2[1].trim(); }
+    }
+
+    const searchItem = str;
+
+    // 搜尋品項（先完全符合，再包含比對）
     let matchedIdxs = [];
-    // 完全符合名稱（且備註也符合，若有指定備註）
     o.items.forEach((i, idx) => {
-      if (i.name === searchItem) {
-        if (searchNote === null || i.note === searchNote) matchedIdxs.push(idx);
-      }
+      if (i.name === searchItem && (searchNote === null || i.note === searchNote)) matchedIdxs.push(idx);
     });
-    // 包含比對
     if (matchedIdxs.length === 0) {
       o.items.forEach((i, idx) => {
-        if (i.name.includes(searchItem)) {
-          if (searchNote === null || (i.note && i.note.includes(searchNote))) matchedIdxs.push(idx);
-        }
+        if (i.name.includes(searchItem) && (searchNote === null || (i.note && i.note.includes(searchNote)))) matchedIdxs.push(idx);
       });
-    }
-    // 若有指定備註但找不到，再試不帶備註搜尋
-    if (matchedIdxs.length === 0 && searchNote !== null) {
-      o.items.forEach((i, idx) => { if (i.name === searchItem) matchedIdxs.push(idx); });
-      if (matchedIdxs.length === 0) {
-        o.items.forEach((i, idx) => { if (i.name.includes(searchItem)) matchedIdxs.push(idx); });
-      }
     }
 
     if (matchedIdxs.length === 0) {
