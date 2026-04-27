@@ -1290,17 +1290,31 @@ async function handleMessage(event) {
   }
   session.orders[userId].dept = depts[userId] || null;
 
-  // 逐行解析餐點
+  // 逐行解析餐點（相同品項自動合併）
   const addedItems = [];
   for (const line of orderLines) {
     const parsed = parseOrderText(line);
     if (!parsed.itemName) continue;
-    session.orders[userId].items.push({
-      name: parsed.itemName,
-      price: parsed.price,
-      note: parsed.note,
-      qty: parsed.qty
-    });
+
+    // 檢查是否已有完全相同的品項（名稱+備註+價格都相同）
+    const existing = session.orders[userId].items.find(i =>
+      i.name === parsed.itemName &&
+      i.note === parsed.note &&
+      i.price === parsed.price
+    );
+
+    if (existing) {
+      // 合併：直接增加數量
+      existing.qty += parsed.qty;
+    } else {
+      // 新增
+      session.orders[userId].items.push({
+        name: parsed.itemName,
+        price: parsed.price,
+        note: parsed.note,
+        qty: parsed.qty
+      });
+    }
     addedItems.push(parsed);
   }
 
