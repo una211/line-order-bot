@@ -584,31 +584,7 @@ async function handleMessage(event) {
     return;
   }
 
-  // ── 幫別人設定科室（名字是科室）──
-  const deptByNameMatch1 = text.match(/^(\S+)是(\S+)$/);
-  if (deptByNameMatch1) {
-    const targetName = deptByNameMatch1[1].trim();
-    const dept = deptByNameMatch1[2].trim();
-    pendingDepts[targetName] = dept;
-    await replyMessage(replyToken, { type: 'text', text: `已預設「${targetName}」的科室為「${dept}」\n等 ${targetName} 點餐後自動綁定！` });
-    return;
-  }
 
-  // ── 幫別人設定科室（名字 科室，只在未開單時生效）──
-  if (!session.isOpen) {
-    const deptByNameMatch2 = text.match(/^(\S+)\s+(\S+)$/);
-    if (deptByNameMatch2) {
-      const targetName = deptByNameMatch2[1].trim();
-      const dept = deptByNameMatch2[2].trim();
-      // 排除指令關鍵字
-      const keywords = ['開單', '結單', '說明', '開始訂餐', '開始點餐', '查看訂單', '目前訂單', '我的訂單', '取消全部', '科室設定', '查看科室', '設定代號', '設定暱稱', '我的代號', '我的暱稱', '查看代號', '查看暱稱', '代號設定', '暱稱設定'];
-      if (!keywords.includes(targetName)) {
-        pendingDepts[targetName] = dept;
-        await replyMessage(replyToken, { type: 'text', text: `已預設「${targetName}」的科室為「${dept}」\n等 ${targetName} 點餐後自動綁定！` });
-        return;
-      }
-    }
-  }
 
   // ── 批次設定科室 ──
   if (text.startsWith('批次設定科室') && !text.startsWith('批次設定科室+代號') && !text.startsWith('批次設定科室＋代號')) {
@@ -1066,7 +1042,9 @@ async function handleMessage(event) {
       }
       await replyMessage(replyToken, { type: 'text', text: '已取消所有人的所有訂單。' });
     } else {
-      const { itemName: allItem } = parseItemAndQty(target);
+      // 移除 $ 符號避免干擾比對
+      const cleanTarget = target.replace(/\$/g, '').trim();
+      const { itemName: allItem } = parseItemAndQty(cleanTarget);
       let total = 0;
       const affectedNames = [];
       for (const uid of Object.keys(session.orders)) {
@@ -1093,7 +1071,8 @@ async function handleMessage(event) {
   const cancelPersonMatch = text.match(/^取消 @(.+?)[的 ](.+)$/);
   if (cancelPersonMatch) {
     const targetName = cancelPersonMatch[1].trim();
-    const targetItem = cancelPersonMatch[2].trim();
+    // 移除 $ 符號避免干擾比對
+    const targetItem = cancelPersonMatch[2].trim().replace(/\$/g, '').trim();
 
     // 找到目標人的 userId（只比對 LINE 原本名稱）
     let targetUid = null;
