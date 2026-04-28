@@ -478,8 +478,6 @@ async function handleMessage(event) {
   const userId = event.source.userId;
   const groupId = event.source.groupId || event.source.roomId || userId;
   const isGroup = !!event.source.groupId || !!event.source.roomId;
-  console.log(`[MSG] groupId: ${groupId}, userId: ${userId}`);
-
   // 白名單檢查
   if (ALLOWED_GROUP_IDS.length > 0 && isGroup && !ALLOWED_GROUP_IDS.includes(groupId)) return;
 
@@ -1149,7 +1147,6 @@ async function handleMessage(event) {
       for (const uid of Object.keys(session.orders)) {
         const o2 = session.orders[uid];
         const matched2 = findMatchedItems(o2.items, parsed);
-        console.log(`[DEBUG @All] uid=${uid}, name=${o2.name}, matched=${matched2.length}, items=${JSON.stringify(o2.items.map(i=>i.name+'|'+i.note+'|'+i.price))}`);
         if (matched2.length > 1) {
           // 同一人有多筆相同名稱，需要確認
           blocked = true;
