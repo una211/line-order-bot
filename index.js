@@ -478,6 +478,7 @@ async function handleMessage(event) {
   const userId = event.source.userId;
   const groupId = event.source.groupId || event.source.roomId || userId;
   const isGroup = !!event.source.groupId || !!event.source.roomId;
+  console.log(`[MSG] groupId: ${groupId}, userId: ${userId}`);
 
   // 白名單檢查
   if (ALLOWED_GROUP_IDS.length > 0 && isGroup && !ALLOWED_GROUP_IDS.includes(groupId)) return;
