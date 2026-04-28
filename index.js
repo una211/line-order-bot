@@ -1144,15 +1144,27 @@ async function handleMessage(event) {
       const parsed = parseCancelStr(target);
       let total = 0;
       const affectedNames = [];
+      let blocked = false;
+
       for (const uid of Object.keys(session.orders)) {
         const o2 = session.orders[uid];
         const matched2 = findMatchedItems(o2.items, parsed);
-        if (matched2.length > 0) {
-          const result = doCancel(o2.items, matched2[0], parsed.qty);
+        console.log(`[DEBUG @All] uid=${uid}, name=${o2.name}, matched=${matched2.length}, items=${JSON.stringify(o2.items.map(i=>i.name+'|'+i.note+'|'+i.price))}`);
+        if (matched2.length > 1) {
+          // 同一人有多筆相同名稱，需要確認
+          blocked = true;
+          const msg = `${o2.name} 有多筆相同品項，請加備註或價格區分：\n` +
+            showDuplicateList(o2.items, matched2, parsed.itemName);
+          await replyMessage(replyToken, { type: 'text', text: msg });
+          return;
+        }
+        if (matched2.length === 1) {
+          doCancel(o2.items, matched2[0], parsed.qty);
           affectedNames.push(o2.name);
           total++;
         }
       }
+
       if (total > 0) {
         await replyMessage(replyToken, { type: 'text', text: `已取消所有人的「${parsed.itemName}」\n受影響（${total}人）：${affectedNames.join('、')}` });
       } else {
