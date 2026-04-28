@@ -1020,6 +1020,105 @@ async function handleMessage(event) {
     return { itemName, qty, filterPrice };
   }
 
+  // ===== 取消共用解析函式 =====
+  function parseCancelStr(input) {
+    let str = input.replace(/\$/g, '').trim(); // 移除 $ 符號
+    let noPrice = false;
+    let noNote = false;
+    let qty = 1;
+    let filterPrice = null;
+    let filterNote = null;
+
+    // 步驟1：移除數量（*N 格式）
+    const qm = str.match(/^(.+?)\s*[*×xX]\s*(\d+)$/);
+    if (qm) { str = qm[1].trim(); qty = parseInt(qm[2]); }
+
+    // 步驟2：移除特殊關鍵字（while支援任意組合）
+    let kw = true;
+    while (kw) {
+      kw = false;
+      if (/無備註/.test(str)) { noNote = true; str = str.replace(/\s*無備註/, '').trim(); kw = true; }
+      if (/無價格/.test(str)) { noPrice = true; str = str.replace(/\s*無價格/, '').trim(); kw = true; }
+    }
+
+    // 步驟3：移除括號備註
+    const bm = str.match(/^(.+?)[（(]([^）)]+)[）)](.*)$/);
+    if (bm) { filterNote = bm[2].trim(); str = (bm[1] + bm[3]).trim(); }
+
+    // 步驟4：移除價格（結尾數字，名稱需含非數字字元）
+    if (!noPrice) {
+      const pm = str.match(/^(.+?)\s*(\d+)$/);
+      if (pm && /\D/.test(pm[1].trim())) { filterPrice = parseInt(pm[2]); str = pm[1].trim(); }
+    }
+
+    return { itemName: str, qty, filterPrice, filterNote, noPrice, noNote };
+  }
+
+  // 搜尋符合條件的品項索引
+  function findMatchedItems(items, parsed) {
+    const { itemName, filterPrice, filterNote, noPrice, noNote } = parsed;
+    let matched = [];
+    // 先完全符合名稱
+    items.forEach((i, idx) => { if (i.name === itemName) matched.push(idx); });
+    // 再包含比對
+    if (matched.length === 0) {
+      items.forEach((i, idx) => { if (i.name.includes(itemName)) matched.push(idx); });
+    }
+    // 套用備註過濾
+    if (filterNote !== null) {
+      const noteFiltered = matched.filter(idx => items[idx].note === filterNote);
+      if (noteFiltered.length > 0) matched = noteFiltered;
+    }
+    if (noNote) {
+      const noNoteFiltered = matched.filter(idx => !items[idx].note);
+      if (noNoteFiltered.length > 0) matched = noNoteFiltered;
+    }
+    // 套用價格過濾
+    if (filterPrice !== null) {
+      const priceFiltered = matched.filter(idx => items[idx].price === filterPrice);
+      if (priceFiltered.length > 0) matched = priceFiltered;
+    }
+    if (noPrice) {
+      const noPriceFiltered = matched.filter(idx => items[idx].price === null);
+      if (noPriceFiltered.length > 0) matched = noPriceFiltered;
+    }
+    return matched;
+  }
+
+  // 執行取消（單筆或多份）
+  function doCancel(items, idx, qty) {
+    const item = items[idx];
+    if (qty >= item.qty) {
+      items.splice(idx, 1);
+      return 'removed';
+    } else {
+      item.qty -= qty;
+      return 'reduced';
+    }
+  }
+
+  // 顯示品項名稱（含備註）
+  function displayItem(item) {
+    return item.note ? `${item.name}（${item.note}）` : item.name;
+  }
+
+  // 顯示多筆重複清單
+  function showDuplicateList(items, matched, searchName) {
+    let listStr = `找到 ${matched.length} 筆「${searchName}」，請加備註或價格區分：\n`;
+    const exLines = [];
+    matched.forEach((idx, i) => {
+      const it = items[idx];
+      const priceStr = it.price !== null ? `${it.price}` : '無價格';
+      const noteStr = it.note ? `（${it.note}）` : '（無備註）';
+      listStr += `  ${i + 1}. ${it.name}${noteStr} ${priceStr}\n`;
+      const exNote = it.note ? `（${it.note}）` : ' 無備註';
+      const exPrice = it.price !== null ? String(it.price) : ' 無價格';
+      exLines.push(`  取消 ${it.name}${exNote}${exPrice}`);
+    });
+    listStr += `\nEX:\n${exLines.join('\n')}`;
+    return listStr;
+  }
+
   // ── 取消我的訂單（自己所有）──
   if (text === '取消我的訂單' || text === '取消我的餐點') {
     if (session.orders[userId] && session.orders[userId].items.length > 0) {
@@ -1042,39 +1141,34 @@ async function handleMessage(event) {
       }
       await replyMessage(replyToken, { type: 'text', text: '已取消所有人的所有訂單。' });
     } else {
-      // 移除 $ 符號避免干擾比對
-      const cleanTarget = target.replace(/\$/g, '').trim();
-      const { itemName: allItem } = parseItemAndQty(cleanTarget);
+      const parsed = parseCancelStr(target);
       let total = 0;
       const affectedNames = [];
       for (const uid of Object.keys(session.orders)) {
         const o2 = session.orders[uid];
-        let i2 = o2.items.findIndex(i => i.name === allItem);
-        if (i2 === -1) i2 = o2.items.findIndex(i => i.name.includes(allItem));
-        if (i2 !== -1) {
+        const matched2 = findMatchedItems(o2.items, parsed);
+        if (matched2.length > 0) {
+          const result = doCancel(o2.items, matched2[0], parsed.qty);
           affectedNames.push(o2.name);
-          o2.items.splice(i2, 1);
           total++;
         }
       }
       if (total > 0) {
-        await replyMessage(replyToken, { type: 'text', text: `已取消所有人的「${allItem}」\n受影響（${total}人）：${affectedNames.join('、')}` });
+        await replyMessage(replyToken, { type: 'text', text: `已取消所有人的「${parsed.itemName}」\n受影響（${total}人）：${affectedNames.join('、')}` });
       } else {
-        await replyMessage(replyToken, { type: 'text', text: `找不到「${allItem}」，沒有人點這道。` });
+        await replyMessage(replyToken, { type: 'text', text: `找不到「${parsed.itemName}」，沒有人點這道。` });
       }
     }
     return;
   }
 
   // ── 取消 @小明 的OO 或 所有訂單 ──
-  // 支援：取消 @小明的雞腿便當 或 取消 @小明 雞腿便當
-  const cancelPersonMatch = text.match(/^取消 @(.+?)[的 ](.+)$/);
+  const cancelPersonMatch = text.match(/^取消 @(.+?)[的 ](.+)$/) || text.match(/^取消 @(\S+) (.+)$/);
   if (cancelPersonMatch) {
     const targetName = cancelPersonMatch[1].trim();
-    // 移除 $ 符號避免干擾比對
-    const targetItem = cancelPersonMatch[2].trim().replace(/\$/g, '').trim();
+    const targetItem = cancelPersonMatch[2].trim();
 
-    // 找到目標人的 userId（只比對 LINE 原本名稱）
+    // 找到目標人的 userId（比對 LINE 原本名稱）
     let targetUid = null;
     for (const uid of Object.keys(session.orders)) {
       try {
@@ -1092,7 +1186,7 @@ async function handleMessage(event) {
     }
 
     if (!targetUid) {
-      await replyMessage(replyToken, { type: 'text', text: `找不到「${targetName}」，請確認名稱是否正確。` });
+      await replyMessage(replyToken, { type: 'text', text: `找不到「${targetName}」，請確認 LINE 名稱是否正確。` });
       return;
     }
 
@@ -1104,24 +1198,26 @@ async function handleMessage(event) {
       return;
     }
 
-    const { itemName: pItem, qty: pQty } = parseItemAndQty(targetItem);
-    let pidx = oTarget.items.findIndex(i => i.name === pItem);
-    if (pidx === -1) pidx = oTarget.items.findIndex(i => i.name.includes(pItem));
-    if (pidx === -1) {
-      await replyMessage(replyToken, { type: 'text', text: `找不到「${targetName}」的「${pItem}」。` });
+    const parsedP = parseCancelStr(targetItem);
+    const matchedP = findMatchedItems(oTarget.items, parsedP);
+
+    if (matchedP.length === 0) {
+      await replyMessage(replyToken, { type: 'text', text: `找不到「${targetName}」的「${parsedP.itemName}」。` });
+      return;
+    }
+    if (matchedP.length > 1) {
+      await replyMessage(replyToken, { type: 'text', text: showDuplicateList(oTarget.items, matchedP, parsedP.itemName) });
       return;
     }
 
-    const pTargetItem = oTarget.items[pidx];
-    const pDisplayName = pTargetItem.note ? `${pTargetItem.name}（${pTargetItem.note}）` : pTargetItem.name;
-
-    if (pQty >= pTargetItem.qty) {
-      oTarget.items.splice(pidx, 1);
-      await replyMessage(replyToken, { type: 'text', text: `已取消 ${targetName} 的：${pDisplayName}` });
+    const pItem = oTarget.items[matchedP[0]];
+    const pDisplay = displayItem(pItem);
+    const result = doCancel(oTarget.items, matchedP[0], parsedP.qty);
+    if (result === 'removed') {
+      await replyMessage(replyToken, { type: 'text', text: `已取消 ${targetName} 的：${pDisplay}` });
     } else {
-      pTargetItem.qty -= pQty;
-      const pp = pTargetItem.price !== null ? `${pTargetItem.price}` : '';
-      await replyMessage(replyToken, { type: 'text', text: `已取消 ${targetName} 的 ${pDisplayName} ${pQty} 份\n剩餘：${pTargetItem.name}${pp}×${pTargetItem.qty}` });
+      const pp = pItem.price !== null ? `${pItem.price}` : '';
+      await replyMessage(replyToken, { type: 'text', text: `已取消 ${targetName} 的 ${pDisplay} ${parsedP.qty} 份\n剩餘：${pItem.name}${pp}×${pItem.qty}` });
     }
     return;
   }
@@ -1133,17 +1229,19 @@ async function handleMessage(event) {
       await replyMessage(replyToken, { type: 'text', text: '你還沒有點餐，無法取消。' });
       return;
     }
-    const allItemName = text.replace(/^取消所有\s*/, '').trim();
-    let aidx = o.items.findIndex(i => i.name === allItemName);
-    if (aidx === -1) aidx = o.items.findIndex(i => i.name.includes(allItemName));
-    if (aidx === -1) {
-      await replyMessage(replyToken, { type: 'text', text: `找不到「${allItemName}」，請輸入「我的訂單」確認品項名稱。` });
+    const parsedAll = parseCancelStr(text.replace(/^取消所有\s*/, '').trim());
+    const matchedAll = findMatchedItems(o.items, parsedAll);
+
+    if (matchedAll.length === 0) {
+      await replyMessage(replyToken, { type: 'text', text: `找不到「${parsedAll.itemName}」，請輸入「我的訂單」確認品項名稱。` });
       return;
     }
-    const allItem2 = o.items[aidx];
-    const allDisplay = allItem2.note ? `${allItem2.name}（${allItem2.note}）` : allItem2.name;
-    o.items.splice(aidx, 1);
-    await replyMessage(replyToken, { type: 'text', text: `已取消所有：${allDisplay}${showLeft(o.items)}` });
+    // 取消所有符合的品項（從後往前刪避免 index 位移）
+    const sortedAll = [...matchedAll].sort((a, b) => b - a);
+    for (const idx of sortedAll) {
+      o.items.splice(idx, 1);
+    }
+    await replyMessage(replyToken, { type: 'text', text: `已取消所有：${parsedAll.itemName}${showLeft(o.items)}` });
     return;
   }
 
@@ -1155,192 +1253,27 @@ async function handleMessage(event) {
       return;
     }
 
-    // 全新解析器：穩固處理所有取消格式
-    let str = text.replace(/^取消\s*/, '').trim();
-    let noPrice = false;
-    let noNote = false;
-    let cQty = 1;
-    let cPrice = null;
-    let searchNote = null;
+    const parsedC = parseCancelStr(text.replace(/^取消\s*/, '').trim());
+    const matchedC = findMatchedItems(o.items, parsedC);
 
-    // 步驟1：移除數量（*N 格式）
-    const qtyMatch2 = str.match(/^(.+?)\s*[*×xX]\s*(\d+)$/);
-    if (qtyMatch2) { str = qtyMatch2[1].trim(); cQty = parseInt(qtyMatch2[2]); }
-
-    // 步驟2：移除特殊關鍵字（while支援任意組合）
-    let kwChanged = true;
-    while (kwChanged) {
-      kwChanged = false;
-      if (/無備註/.test(str)) { noNote = true; str = str.replace(/\s*無備註/, '').trim(); kwChanged = true; }
-      if (/無價格/.test(str)) { noPrice = true; str = str.replace(/\s*無價格/, '').trim(); kwChanged = true; }
+    if (matchedC.length === 0) {
+      await replyMessage(replyToken, { type: 'text', text: `找不到「${parsedC.itemName}」，請輸入「我的訂單」確認品項名稱。` });
+      return;
     }
-
-    // 步驟3：移除括號備註
-    const bm2 = str.match(/^(.+?)[（(]([^）)]+)[）)](.*)$/);
-    if (bm2) { searchNote = bm2[2].trim(); str = (bm2[1] + bm2[3]).trim(); }
-
-    // 步驟4：移除價格（結尾數字，名稱需含非數字字元）
-    // 先移除 $ 符號避免干擾比對
-    str = str.replace(/\$/g, '').trim();
-    if (!noPrice) {
-      const pm2 = str.match(/^(.+?)\s*(\d+)$/);
-      if (pm2 && /\D/.test(pm2[1].trim())) { cPrice = parseInt(pm2[2]); str = pm2[1].trim(); }
-    }
-
-    const searchItem = str;
-
-    // 搜尋品項（先完全符合，再包含比對）
-    let matchedIdxs = [];
-    o.items.forEach((i, idx) => {
-      if (i.name === searchItem && (searchNote === null || i.note === searchNote)) matchedIdxs.push(idx);
-    });
-    if (matchedIdxs.length === 0) {
-      o.items.forEach((i, idx) => {
-        if (i.name.includes(searchItem) && (searchNote === null || (i.note && i.note.includes(searchNote)))) matchedIdxs.push(idx);
-      });
-    }
-
-    if (matchedIdxs.length === 0) {
-      await replyMessage(replyToken, { type: 'text', text: `找不到「${searchItem}」，請輸入「我的訂單」確認品項名稱。` });
+    if (matchedC.length > 1) {
+      await replyMessage(replyToken, { type: 'text', text: showDuplicateList(o.items, matchedC, parsedC.itemName) });
       return;
     }
 
-    // 過濾無備註
-    if (noNote) {
-      const noNoteFiltered = matchedIdxs.filter(idx => !o.items[idx].note);
-      if (noNoteFiltered.length === 0) {
-        await replyMessage(replyToken, { type: 'text', text: `找不到無備註的「${searchItem}」，請輸入「我的訂單」確認。` });
-        return;
-      }
-      matchedIdxs = noNoteFiltered;
-    }
-
-    // 過濾無價格
-    if (noPrice) {
-      const nopriceFiltered = matchedIdxs.filter(idx => o.items[idx].price === null);
-      if (nopriceFiltered.length === 0) {
-        await replyMessage(replyToken, { type: 'text', text: `找不到無價格的「${searchItem}」，請輸入「我的訂單」確認。` });
-        return;
-      }
-      matchedIdxs = nopriceFiltered;
-    }
-
-    // 若有多筆，先用價格過濾
-    if (!noPrice && matchedIdxs.length > 1 && cPrice !== null) {
-      const priceFiltered = matchedIdxs.filter(idx => o.items[idx].price === cPrice);
-      if (priceFiltered.length > 0) matchedIdxs = priceFiltered;
-    }
-
-    // 若還是有多筆（相同價格但不同備註），顯示清單提示
-    if (matchedIdxs.length > 1) {
-      const lines = [];
-      const exLines = [];
-      matchedIdxs.forEach((idx, i) => {
-        const it = o.items[idx];
-        const priceStr = it.price !== null ? String(it.price) : '無價格';
-        const noteStr = it.note ? `（${it.note}）` : '（無備註）';
-        lines.push(`  ${i + 1}. ${it.name}${noteStr} ${priceStr}`);
-        const exNote = it.note ? `（${it.note}）` : ' 無備註';
-        const exPrice = it.price !== null ? String(it.price) : ' 無價格';
-        exLines.push(`  取消 ${it.name}${exNote}${exPrice}`);
-      });
-      const listStr = [
-        `找到 ${matchedIdxs.length} 筆「${searchItem}」，請加備註或價格區分：`,
-        lines.join('\n'),
-        '',
-        'EX：',
-        exLines.join('\n')
-      ].join('\n');
-      await replyMessage(replyToken, { type: 'text', text: listStr });
-      return;
-    }
-
-    const cidx = matchedIdxs[0];
-    const cTargetItem = o.items[cidx];
-    const cDisplay = cTargetItem.note ? `${cTargetItem.name}（${cTargetItem.note}）` : cTargetItem.name;
-
-    if (cQty >= cTargetItem.qty) {
-      o.items.splice(cidx, 1);
+    const cItem = o.items[matchedC[0]];
+    const cDisplay = displayItem(cItem);
+    const result = doCancel(o.items, matchedC[0], parsedC.qty);
+    if (result === 'removed') {
+      await replyMessage(replyToken, { type: 'text', text: `已取消：${cDisplay}${showLeft(o.items)}` });
     } else {
-      cTargetItem.qty -= cQty;
+      const cp = cItem.price !== null ? `${cItem.price}` : '';
+      await replyMessage(replyToken, { type: 'text', text: `已取消 ${cDisplay} ${parsedC.qty} 份\n目前訂單：${cItem.name}${cp}×${cItem.qty}` });
     }
-
-    // 統一顯示完整剩餘訂單
-    const cancelMsg = cQty > 1 ? `已取消 ${cDisplay} ${cQty} 份` : `已取消：${cDisplay}`;
-    await replyMessage(replyToken, { type: 'text', text: `${cancelMsg}${showLeft(o.items)}` });
-    return;
-  }
-
-  // ── 修改價格 ──
-  const priceChangeMatch = text.match(/^(.+?)改(\d+)元$/);
-  if (priceChangeMatch) {
-    const itemName = priceChangeMatch[1].trim();
-    const newPrice = parseInt(priceChangeMatch[2]);
-    const o = session.orders[userId];
-    if (!o) return;
-    const items = o.items.filter(i => i.name === itemName || i.name.includes(itemName));
-    if (items.length === 0) {
-      await replyMessage(replyToken, { type: 'text', text: `找不到「${itemName}」，請輸入「我的訂單」確認品項名稱。` });
-      return;
-    }
-    const oldPrice = items[0].price;
-    items.forEach(i => i.price = newPrice);
-    await replyMessage(replyToken, { type: 'text', text: `已更新價格：${itemName} $${oldPrice ?? 0} → $${newPrice}` });
-    return;
-  }
-
-  // ── 修改數量 ──
-  const qtyUnits = ['個', '份', '盒', '杯'];
-  const qtyPattern = new RegExp(`^(.+?)改(\\d+)(${qtyUnits.join('|')})$`);
-  const qtyChangeMatch = text.match(qtyPattern);
-  if (qtyChangeMatch) {
-    const itemName = qtyChangeMatch[1].trim();
-    const newQty = parseInt(qtyChangeMatch[2]);
-    const o = session.orders[userId];
-    if (!o) return;
-    const items = o.items.filter(i => i.name === itemName || i.name.includes(itemName));
-    if (items.length === 0) {
-      await replyMessage(replyToken, { type: 'text', text: `找不到「${itemName}」，請輸入「我的訂單」確認品項名稱。` });
-      return;
-    }
-    const oldQty = items[0].qty;
-    items.forEach(i => i.qty = newQty);
-    await replyMessage(replyToken, { type: 'text', text: `已更新數量：${itemName} ${oldQty}份 → ${newQty}份` });
-    return;
-  }
-
-  // ── 全部加減價 ──
-  const allPriceMatch = text.match(/^全部(加|減)(\d+)$/);
-  if (allPriceMatch) {
-    const op = allPriceMatch[1];
-    const amount = parseInt(allPriceMatch[2]);
-    for (const uid of Object.keys(session.orders)) {
-      for (const item of session.orders[uid].items) {
-        if (item.price !== null) {
-          item.price = op === '加' ? item.price + amount : Math.max(0, item.price - amount);
-        }
-      }
-    }
-    await replyMessage(replyToken, { type: 'text', text: `已全部${op}價 $${amount}！\n輸入「目前訂單」查看更新後結果。` });
-    return;
-  }
-
-  // ── 全部打折 ──
-  const discountMatch = text.match(/^全部打(\d+(?:\.\d+)?)折$/);
-  if (discountMatch) {
-    const discount = parseFloat(discountMatch[1]) / 10;
-    if (discount <= 0 || discount > 1) {
-      await replyMessage(replyToken, { type: 'text', text: '折扣格式錯誤，例：全部打9折、全部打8.5折' });
-      return;
-    }
-    for (const uid of Object.keys(session.orders)) {
-      for (const item of session.orders[uid].items) {
-        if (item.price !== null) {
-          item.price = Math.round(item.price * discount);
-        }
-      }
-    }
-    await replyMessage(replyToken, { type: 'text', text: `已套用 ${discountMatch[1]} 折（小數點四捨五入）！\n輸入「目前訂單」查看更新後結果。` });
     return;
   }
 
