@@ -1309,15 +1309,20 @@ async function handleMessage(event) {
   session.orders[userId].name = name;
 
   // 檢查是否有待綁定的科室設定
+  console.log(`[DEPT] lineName="${lineName}", name="${name}", pendingKeys=${JSON.stringify(Object.keys(pendingDepts))}`);
   if (!depts[userId]) {
     if (pendingDepts[name]) {
       depts[userId] = pendingDepts[name];
       await saveDept(groupId, userId, depts[userId]);
       delete pendingDepts[name];
+      console.log(`[DEPT] 綁定成功（代號）: ${name} → ${depts[userId]}`);
     } else if (pendingDepts[lineName]) {
       depts[userId] = pendingDepts[lineName];
       await saveDept(groupId, userId, depts[userId]);
       delete pendingDepts[lineName];
+      console.log(`[DEPT] 綁定成功（LINE名）: ${lineName} → ${depts[userId]}`);
+    } else {
+      console.log(`[DEPT] 找不到待綁定科室`);
     }
   }
   session.orders[userId].dept = depts[userId] || null;
