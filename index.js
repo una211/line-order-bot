@@ -54,10 +54,6 @@ async function loadFromDB() {
       nicknameSettings[doc.groupId][doc.userId] = doc.value;
     }
     console.log(`資料載入完成！科室設定 ${depts.length} 筆，代號設定 ${nicknames.length} 筆`);
-    // Debug：列出所有代號設定
-    for (const doc of nicknames) {
-      console.log(`[DB] nickname: groupId=${doc.groupId}, userId=${doc.userId}, value=${doc.value}`);
-    }
   } catch (e) {
     console.error('載入資料失敗：', e.message);
   }
