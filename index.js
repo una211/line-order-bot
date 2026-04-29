@@ -196,50 +196,60 @@ function getPendingDeptSettings(groupId) {
   return pendingDeptSettings[groupId];
 }
 
-// ===== 解析點餐訊息 =====
+// ===== 統一解析器 =====
+// mode: 'order'=點餐, 'cancel'=取消
+function parseItem(str, mode) {
+  if (!mode) mode = 'order';
+  let s = str.trim().replace(/\$/g, '');
+  let qty = 1, price = null, note = null, noNote = false, noPrice = false;
+
+  // 步驟1：移除數量（*N 格式）
+  const qtyMatch = s.match(/^(.+?)\s*[*×xX]\s*(\d+)$/);
+  if (qtyMatch) { s = qtyMatch[1].trim(); qty = parseInt(qtyMatch[2]); }
+
+  // 步驟2（取消模式）：移除特殊關鍵字
+  if (mode === 'cancel') {
+    let changed = true;
+    while (changed) {
+      changed = false;
+      if (/無備註/.test(s)) { noNote = true; s = s.replace(/\s*無備註/, '').trim(); changed = true; }
+      if (/無價格/.test(s)) { noPrice = true; s = s.replace(/\s*無價格/, '').trim(); changed = true; }
+    }
+  }
+
+  // 步驟3：移除括號備註（全形半形都支援）
+  const bm = s.match(/^(.+?)[（(]([^）)]+)[）)](.*)$/);
+  if (bm) { note = bm[2].trim(); s = (bm[1] + bm[3]).trim(); }
+
+  // 步驟4（點餐模式）：「備註 XX」關鍵字格式
+  if (mode === 'order' && !note) {
+    const nwp = s.match(/^(.+?)\s+備註\s+(.+?)\s+(\d+)$/);
+    const no = s.match(/^(.+?)\s+備註\s+(.+)$/);
+    if (nwp) {
+      s = nwp[1].trim(); note = nwp[2].trim(); price = parseInt(nwp[3]);
+      return { name: s, note, price, qty, noNote, noPrice };
+    } else if (no) { s = no[1].trim(); note = no[2].trim(); }
+  }
+
+  // 步驟5：移除價格（有空格 > 緊接數字）
+  if (!noPrice) {
+    const pm = s.match(/^(.+?)\s+(\d+)$/) || s.match(/^(.*\D)(\d+)$/);
+    if (pm && pm[1].trim().length > 0) { price = parseInt(pm[2]); s = pm[1].trim(); }
+  }
+
+  return { name: s, note, price, qty, noNote, noPrice };
+}
+
+// 點餐用包裝函式（回傳舊格式，向下相容）
 function parseOrderText(text) {
-  let itemName = text.trim();
-  let price = null;
-  let note = null;
-  let qty = 1;
+  const r = parseItem(text, 'order');
+  return { itemName: r.name, note: r.note, price: r.price, qty: r.qty };
+}
 
-  // 抓括號備註
-  const bracketMatch = itemName.match(/[（(]([^）)]+)[）)]/);
-  if (bracketMatch) {
-    note = bracketMatch[1].trim();
-    itemName = itemName.replace(bracketMatch[0], '').trim();
-  }
-
-  // 抓「備註」關鍵字
-  const noteKeywordMatch = itemName.match(/^(.+?)\s+備註\s+(.+)$/);
-  if (noteKeywordMatch) {
-    itemName = noteKeywordMatch[1].trim();
-    note = noteKeywordMatch[2].trim();
-  }
-
-  // 抓「價格*數量」格式
-  // 必須是「空格或$」+數字+[*×xX]+數字 結尾
-  // 例：雞腿便當 80*2、雞腿便當$80*2、排骨飯 60 *1
-  const priceQtyMatch = itemName.match(/^(.+?)[\s$](\d+)\s*[*×xX]\s*(\d+)$/) ||
-                        itemName.match(/^(.+?)\s*\$(\d+)\s*[*×xX]\s*(\d+)$/);
-  if (priceQtyMatch) {
-    itemName = priceQtyMatch[1].trim();
-    price = parseInt(priceQtyMatch[2]);
-    qty = parseInt(priceQtyMatch[3]);
-    return { itemName, price, note, qty };
-  }
-
-  // 抓價格（支援空格或$符號後接數字）
-  // 麵線$50、麵線 50、麵線 $50
-  const priceMatch = itemName.match(/^(.+?)\s*\$(\d+)$/) ||
-                     itemName.match(/^(.+?)\s+(\d+)$/) ||
-                     itemName.match(/^(.+[^\d])(\d+)$/);  // 名稱結尾緊接數字（無空格無$）
-  if (priceMatch) {
-    itemName = priceMatch[1].trim();
-    price = parseInt(priceMatch[2]);
-  }
-
-  return { itemName, price, note, qty };
+// 取消用包裝函式
+function parseCancelStr(text) {
+  const r = parseItem(text, 'cancel');
+  return { itemName: r.name, filterNote: r.note, filterPrice: r.price, qty: r.qty, noNote: r.noNote, noPrice: r.noPrice };
 }
 
 // ===== 建立結單訊息（2則）=====
@@ -957,164 +967,6 @@ async function handleMessage(event) {
       return `${i.name}${n}${p}×${i.qty}`;
     });
     return `\n目前訂單：${strs.join('、')}`;
-  }
-
-  // ── 輔助：解析品項名稱和數量 ──
-  function parseItemAndQty(str) {
-    let itemName = str.trim();
-    let qty = 1;
-    let filterPrice = null;
-
-    // 優先判斷 *數量 格式（明確表示數量）
-    const starMatch = itemName.match(/^(.+)\s*[*×xX]\s*(\d+)$/);
-    if (starMatch) {
-      itemName = starMatch[1].trim();
-      qty = parseInt(starMatch[2]);
-      // 再從名稱結尾抓出價格
-      const pm = itemName.match(/^(.+?)(\d+)$/);
-      if (pm && pm[1].trim().length > 0) {
-        filterPrice = parseInt(pm[2]);
-        itemName = pm[1].trim();
-      }
-      return { itemName, qty, filterPrice };
-    }
-
-    // 判斷結尾有無 *數量 格式以外的數字
-    // 規則：
-    //   炸豬排110    → filterPrice=110（緊接名稱後面的數字是價格）
-    //   炸豬排 110   → filterPrice=110（空格後數字也當價格，不當數量）
-    //   炸豬排 110 2 → filterPrice=110, qty=2（最後一個數字是數量）
-    //   取消 2       → qty=2（純數字當數量）
-
-    // 先看有沒有「名稱 價格 數量」格式
-    const fullMatch = itemName.match(/^(.+?)\s+(\d+)\s+(\d+)$/);
-    if (fullMatch) {
-      itemName = fullMatch[1].trim();
-      filterPrice = parseInt(fullMatch[2]);
-      qty = parseInt(fullMatch[3]);
-      return { itemName, qty, filterPrice };
-    }
-
-    // 名稱緊接價格（無空格）：炸豬排110
-    const noSpacePrice = itemName.match(/^(.+?)(\d+)$/);
-    if (noSpacePrice && noSpacePrice[1].trim().length > 0) {
-      // 確認名稱部分不是純數字
-      const possibleName = noSpacePrice[1].trim();
-      if (/\D/.test(possibleName)) {
-        filterPrice = parseInt(noSpacePrice[2]);
-        itemName = possibleName;
-        return { itemName, qty, filterPrice };
-      }
-    }
-
-    // 名稱+空格+數字：紅燒虱目魚肚 210 → 當價格不是數量
-    const spacePrice = itemName.match(/^(.+)\s+(\d+)$/);
-    if (spacePrice) {
-      itemName = spacePrice[1].trim();
-      filterPrice = parseInt(spacePrice[2]);
-      return { itemName, qty, filterPrice };
-    }
-
-    return { itemName, qty, filterPrice };
-  }
-
-  // ===== 取消共用解析函式 =====
-  function parseCancelStr(input) {
-    let str = input.replace(/\$/g, '').trim(); // 移除 $ 符號
-    let noPrice = false;
-    let noNote = false;
-    let qty = 1;
-    let filterPrice = null;
-    let filterNote = null;
-
-    // 步驟1：移除數量（*N 格式）
-    const qm = str.match(/^(.+?)\s*[*×xX]\s*(\d+)$/);
-    if (qm) { str = qm[1].trim(); qty = parseInt(qm[2]); }
-
-    // 步驟2：移除特殊關鍵字（while支援任意組合）
-    let kw = true;
-    while (kw) {
-      kw = false;
-      if (/無備註/.test(str)) { noNote = true; str = str.replace(/\s*無備註/, '').trim(); kw = true; }
-      if (/無價格/.test(str)) { noPrice = true; str = str.replace(/\s*無價格/, '').trim(); kw = true; }
-    }
-
-    // 步驟3：移除括號備註
-    const bm = str.match(/^(.+?)[（(]([^）)]+)[）)](.*)$/);
-    if (bm) { filterNote = bm[2].trim(); str = (bm[1] + bm[3]).trim(); }
-
-    // 步驟4：移除價格（結尾數字，名稱需含非數字字元）
-    if (!noPrice) {
-      const pm = str.match(/^(.+?)\s*(\d+)$/);
-      if (pm && /\D/.test(pm[1].trim())) { filterPrice = parseInt(pm[2]); str = pm[1].trim(); }
-    }
-
-    return { itemName: str, qty, filterPrice, filterNote, noPrice, noNote };
-  }
-
-  // 搜尋符合條件的品項索引
-  function findMatchedItems(items, parsed) {
-    const { itemName, filterPrice, filterNote, noPrice, noNote } = parsed;
-    let matched = [];
-    // 先完全符合名稱
-    items.forEach((i, idx) => { if (i.name === itemName) matched.push(idx); });
-    // 再包含比對
-    if (matched.length === 0) {
-      items.forEach((i, idx) => { if (i.name.includes(itemName)) matched.push(idx); });
-    }
-    // 套用備註過濾
-    if (filterNote !== null) {
-      const noteFiltered = matched.filter(idx => items[idx].note === filterNote);
-      if (noteFiltered.length > 0) matched = noteFiltered;
-    }
-    if (noNote) {
-      const noNoteFiltered = matched.filter(idx => !items[idx].note);
-      if (noNoteFiltered.length > 0) matched = noNoteFiltered;
-    }
-    // 套用價格過濾
-    if (filterPrice !== null) {
-      const priceFiltered = matched.filter(idx => items[idx].price === filterPrice);
-      if (priceFiltered.length > 0) matched = priceFiltered;
-    }
-    if (noPrice) {
-      const noPriceFiltered = matched.filter(idx => items[idx].price === null);
-      if (noPriceFiltered.length > 0) matched = noPriceFiltered;
-    }
-    return matched;
-  }
-
-  // 執行取消（單筆或多份）
-  function doCancel(items, idx, qty) {
-    const item = items[idx];
-    if (qty >= item.qty) {
-      items.splice(idx, 1);
-      return 'removed';
-    } else {
-      item.qty -= qty;
-      return 'reduced';
-    }
-  }
-
-  // 顯示品項名稱（含備註）
-  function displayItem(item) {
-    return item.note ? `${item.name}（${item.note}）` : item.name;
-  }
-
-  // 顯示多筆重複清單
-  function showDuplicateList(items, matched, searchName) {
-    let listStr = `找到 ${matched.length} 筆「${searchName}」，請加備註或價格區分：\n`;
-    const exLines = [];
-    matched.forEach((idx, i) => {
-      const it = items[idx];
-      const priceStr = it.price !== null ? `${it.price}` : '無價格';
-      const noteStr = it.note ? `（${it.note}）` : '（無備註）';
-      listStr += `  ${i + 1}. ${it.name}${noteStr} ${priceStr}\n`;
-      const exNote = it.note ? `（${it.note}）` : ' 無備註';
-      const exPrice = it.price !== null ? String(it.price) : ' 無價格';
-      exLines.push(`  取消 ${it.name}${exNote}${exPrice}`);
-    });
-    listStr += `\nEX:\n${exLines.join('\n')}`;
-    return listStr;
   }
 
   // ── 取消我的訂單（自己所有）──
