@@ -144,11 +144,8 @@ async function pushMessage(to, messages) {
   });
 }
 
-async function getMemberName(groupId, userId) {
-  // 優先使用暱稱
-  if (nicknameSettings[groupId] && nicknameSettings[groupId][userId]) {
-    return nicknameSettings[groupId][userId];
-  }
+// 取得 LINE 原本名稱（不使用代號）
+async function getLineName(groupId, userId) {
   try {
     const url = groupId
       ? `https://api.line.me/v2/bot/group/${groupId}/member/${userId}`
@@ -158,8 +155,16 @@ async function getMemberName(groupId, userId) {
     });
     return res.data.displayName;
   } catch {
-    return '某位同事';
+    return null;
   }
+}
+
+// 取得顯示名稱（優先使用代號）
+async function getMemberName(groupId, userId) {
+  if (nicknameSettings[groupId] && nicknameSettings[groupId][userId]) {
+    return nicknameSettings[groupId][userId];
+  }
+  return (await getLineName(groupId, userId)) || '某位同事';
 }
 
 function getNicknameSettings(groupId) {
@@ -1073,7 +1078,7 @@ async function handleMessage(event) {
         const o2 = session.orders[uid];
         const matched2 = findMatchedItems(o2.items, parsed);
         if (matched2.length > 1) {
-          // 同一人有多筆相同名稱，需要確認
+          // 同一人有多筆相同名稱，顯示清單要求確認
           blocked = true;
           const msg = `${o2.name} 有多筆相同品項，請加備註或價格區分：\n` +
             showDuplicateList(o2.items, matched2, parsed.itemName);
@@ -1081,7 +1086,8 @@ async function handleMessage(event) {
           return;
         }
         if (matched2.length === 1) {
-          doCancel(o2.items, matched2[0], parsed.qty);
+          // @All 取消該品項全部份數
+          o2.items.splice(matched2[0], 1);
           affectedNames.push(o2.name);
           total++;
         }
@@ -1216,7 +1222,7 @@ async function handleMessage(event) {
   const orderLines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
   // 取得 LINE 原本名稱（用來比對待綁定設定）
-  const lineName = await getMemberName(groupId, userId);
+  const lineName = (await getLineName(groupId, userId)) || '某位同事'; // LINE 原本名稱，用於比對 pending 設定
 
   // 檢查是否有待綁定的暱稱設定（批次設定會直接覆蓋舊設定）
   // 用 LINE 原本名稱比對（代號設定時存的是 LINE 名稱當 key）
@@ -1236,7 +1242,6 @@ async function handleMessage(event) {
 
   // 檢查是否有待綁定的科室設定（批次設定會直接覆蓋舊設定）
   // 同時比對 LINE 名稱和代號
-  console.log(`[BIND] lineName="${lineName}" name="${name}" pendingDeptKeys=${JSON.stringify(Object.keys(pendingDepts))}`);
   const deptKey = pendingDepts[lineName] !== undefined ? lineName :
                   pendingDepts[name] !== undefined ? name : null;
   if (deptKey !== null) {
@@ -1244,7 +1249,7 @@ async function handleMessage(event) {
     await saveDept(groupId, userId, depts[userId]);
     if (session.orders[userId]) session.orders[userId].dept = depts[userId];
     delete pendingDepts[deptKey];
-    console.log(`[BIND] 科室綁定成功: ${deptKey} → ${depts[userId]}`);
+
   }
   session.orders[userId].dept = depts[userId] || null;
 
