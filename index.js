@@ -969,6 +969,79 @@ async function handleMessage(event) {
     return `\n目前訂單：${strs.join('、')}`;
   }
 
+  // ===== 取消輔助函式 =====
+
+  // 搜尋符合條件的品項索引
+  function findMatchedItems(items, parsed) {
+    const { itemName, filterNote, filterPrice, noNote, noPrice } = parsed;
+    let matched = [];
+    // 先完全符合名稱
+    items.forEach((i, idx) => { if (i.name === itemName) matched.push(idx); });
+    // 再包含比對
+    if (matched.length === 0) {
+      items.forEach((i, idx) => { if (i.name.includes(itemName)) matched.push(idx); });
+    }
+    // 套用備註過濾
+    if (filterNote !== null && filterNote !== undefined) {
+      const nf = matched.filter(idx => items[idx].note === filterNote);
+      if (nf.length > 0) matched = nf;
+    }
+    if (noNote) {
+      const nf = matched.filter(idx => !items[idx].note);
+      if (nf.length > 0) matched = nf;
+    }
+    // 套用價格過濾
+    if (filterPrice !== null && filterPrice !== undefined) {
+      const pf = matched.filter(idx => items[idx].price === filterPrice);
+      if (pf.length > 0) matched = pf;
+    }
+    if (noPrice) {
+      const pf = matched.filter(idx => items[idx].price === null);
+      if (pf.length > 0) matched = pf;
+    }
+    return matched;
+  }
+
+  // 執行取消（單筆或多份）
+  function doCancel(items, idx, qty) {
+    const item = items[idx];
+    if (qty >= item.qty) { items.splice(idx, 1); return 'removed'; }
+    else { item.qty -= qty; return 'reduced'; }
+  }
+
+  // 顯示品項名稱（含備註）
+  function displayItem(item) {
+    return item.note ? `${item.name}（${item.note}）` : item.name;
+  }
+
+  // 顯示剩餘訂單
+  function showLeft(items) {
+    if (items.length === 0) return '\n目前無其他訂單';
+    const strs = items.map(i => {
+      const p = i.price !== null ? `${i.price}` : '';
+      const n = i.note ? `（${i.note}）` : '';
+      return `${i.name}${n}${p}×${i.qty}`;
+    });
+    return `\n目前訂單：${strs.join('、')}`;
+  }
+
+  // 顯示重複品項清單
+  function showDuplicateList(items, matched, searchName) {
+    let listStr = `找到 ${matched.length} 筆「${searchName}」，請加備註或價格區分：\n`;
+    const exLines = [];
+    matched.forEach((idx, i) => {
+      const it = items[idx];
+      const priceStr = it.price !== null ? String(it.price) : '無價格';
+      const noteStr = it.note ? `（${it.note}）` : '（無備註）';
+      listStr += `  ${i + 1}. ${it.name}${noteStr} ${priceStr}\n`;
+      const exNote = it.note ? `（${it.note}）` : ' 無備註';
+      const exPrice = it.price !== null ? String(it.price) : ' 無價格';
+      exLines.push(`  取消 ${it.name}${exNote}${exPrice}`);
+    });
+    listStr += `\nEX:\n${exLines.join('\n')}`;
+    return listStr;
+  }
+
   // ── 取消我的訂單（自己所有）──
   if (text === '取消我的訂單' || text === '取消我的餐點') {
     if (session.orders[userId] && session.orders[userId].items.length > 0) {
@@ -1163,6 +1236,7 @@ async function handleMessage(event) {
 
   // 檢查是否有待綁定的科室設定（批次設定會直接覆蓋舊設定）
   // 同時比對 LINE 名稱和代號
+  console.log(`[BIND] lineName="${lineName}" name="${name}" pendingDeptKeys=${JSON.stringify(Object.keys(pendingDepts))}`);
   const deptKey = pendingDepts[lineName] !== undefined ? lineName :
                   pendingDepts[name] !== undefined ? name : null;
   if (deptKey !== null) {
@@ -1170,6 +1244,7 @@ async function handleMessage(event) {
     await saveDept(groupId, userId, depts[userId]);
     if (session.orders[userId]) session.orders[userId].dept = depts[userId];
     delete pendingDepts[deptKey];
+    console.log(`[BIND] 科室綁定成功: ${deptKey} → ${depts[userId]}`);
   }
   session.orders[userId].dept = depts[userId] || null;
 
