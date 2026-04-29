@@ -1294,6 +1294,7 @@ async function handleMessage(event) {
   const lineName = await getMemberName(groupId, userId);
 
   // 檢查是否有待綁定的暱稱設定（批次設定會直接覆蓋舊設定）
+  // 用 LINE 原本名稱比對（代號設定時存的是 LINE 名稱當 key）
   if (pendingNicknames[lineName]) {
     nicknames[userId] = pendingNicknames[lineName];
     await saveNickname(groupId, userId, nicknames[userId]);
@@ -1309,14 +1310,14 @@ async function handleMessage(event) {
   session.orders[userId].name = name;
 
   // 檢查是否有待綁定的科室設定（批次設定會直接覆蓋舊設定）
-  if (pendingDepts[name]) {
-    depts[userId] = pendingDepts[name];
+  // 同時比對 LINE 名稱和代號
+  const deptKey = pendingDepts[lineName] !== undefined ? lineName :
+                  pendingDepts[name] !== undefined ? name : null;
+  if (deptKey !== null) {
+    depts[userId] = pendingDepts[deptKey];
     await saveDept(groupId, userId, depts[userId]);
-    delete pendingDepts[name];
-  } else if (pendingDepts[lineName]) {
-    depts[userId] = pendingDepts[lineName];
-    await saveDept(groupId, userId, depts[userId]);
-    delete pendingDepts[lineName];
+    if (session.orders[userId]) session.orders[userId].dept = depts[userId];
+    delete pendingDepts[deptKey];
   }
   session.orders[userId].dept = depts[userId] || null;
 
