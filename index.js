@@ -961,6 +961,7 @@ async function handleMessage(event) {
       // 已開單 → 只更新結單時間
       await replyMessage(replyToken, { type: 'text', text: `已更新結單時間：${formatTime(deadline)}` });
     }
+    await saveOrders(groupId, session);
     return;
   }
 
@@ -1162,6 +1163,7 @@ async function handleMessage(event) {
       const myName = session.orders[userId].name;
       session.orders[userId].items = [];
       await replyMessage(replyToken, { type: 'text', text: `已取消 ${myName} 的所有訂單。` });
+    await saveOrders(groupId, session);
     } else {
       await replyMessage(replyToken, { type: 'text', text: '你還沒有點餐，無法取消。' });
     }
@@ -1177,6 +1179,7 @@ async function handleMessage(event) {
         session.orders[uid].items = [];
       }
       await replyMessage(replyToken, { type: 'text', text: '已取消所有人的所有訂單。' });
+      await saveOrders(groupId, session);
     } else {
       const parsed = parseCancelStr(target);
       let total = 0;
@@ -1204,6 +1207,7 @@ async function handleMessage(event) {
 
       if (total > 0) {
         await replyMessage(replyToken, { type: 'text', text: `已取消所有人的「${parsed.itemName}」\n受影響（${total}人）：${affectedNames.join('、')}` });
+        await saveOrders(groupId, session);
       } else {
         await replyMessage(replyToken, { type: 'text', text: `找不到「${parsed.itemName}」，沒有人點這道。` });
       }
@@ -1244,6 +1248,7 @@ async function handleMessage(event) {
     if (targetItem === '所有訂單') {
       oTarget.items = [];
       await replyMessage(replyToken, { type: 'text', text: `已取消 ${targetName} 的所有訂單。` });
+      await saveOrders(groupId, session);
       return;
     }
 
@@ -1264,9 +1269,11 @@ async function handleMessage(event) {
     const result = doCancel(oTarget.items, matchedP[0], parsedP.qty);
     if (result === 'removed') {
       await replyMessage(replyToken, { type: 'text', text: `已取消 ${targetName} 的：${pDisplay}` });
+      await saveOrders(groupId, session);
     } else {
       const pp = pItem.price !== null ? `${pItem.price}` : '';
       await replyMessage(replyToken, { type: 'text', text: `已取消 ${targetName} 的 ${pDisplay} ${parsedP.qty} 份\n剩餘：${pItem.name}${pp}×${pItem.qty}` });
+      await saveOrders(groupId, session);
     }
     return;
   }
@@ -1291,6 +1298,7 @@ async function handleMessage(event) {
       o.items.splice(idx, 1);
     }
     await replyMessage(replyToken, { type: 'text', text: `已取消所有：${parsedAll.itemName}${showLeft(o.items)}` });
+    await saveOrders(groupId, session);
     return;
   }
 
@@ -1319,9 +1327,11 @@ async function handleMessage(event) {
     const result = doCancel(o.items, matchedC[0], parsedC.qty);
     if (result === 'removed') {
       await replyMessage(replyToken, { type: 'text', text: `已取消：${cDisplay}${showLeft(o.items)}` });
+      await saveOrders(groupId, session);
     } else {
       const cp = cItem.price !== null ? `${cItem.price}` : '';
       await replyMessage(replyToken, { type: 'text', text: `已取消 ${cDisplay} ${parsedC.qty} 份\n目前訂單：${cItem.name}${cp}×${cItem.qty}` });
+      await saveOrders(groupId, session);
     }
     return;
   }
