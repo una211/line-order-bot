@@ -935,7 +935,7 @@ async function handleMessage(event) {
   }
 
   // ── 11:30結單 → 未開單時觸發開單，已開單時只更新結單時間 ──
-  const timeOnlyMatch = text.match(/^(\d{1,2}:\d{2})結單$/);
+  const timeOnlyMatch = text.match(/^(\d{1,2}:\d{2})\s*結單$/) || text.match(/^(\d{4})\s*結單$/);
   if (timeOnlyMatch) {
     const deadline = parseDeadlineTime(timeOnlyMatch[1]);
     if (!deadline) {
