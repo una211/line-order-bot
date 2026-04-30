@@ -797,6 +797,30 @@ async function handleMessage(event) {
       }
     }
 
+    // 已開單時：若有附時間則更新結單時間，若無附時間則提示已開單
+    if (session.isOpen) {
+      if (timeStr) {
+        const deadline = parseDeadlineTime(timeStr);
+        if (!deadline) {
+          await replyMessage(replyToken, { type: 'text', text: '時間格式錯誤，請輸入如：開單 11:30' });
+          return;
+        }
+        const msUntil = deadline - Date.now();
+        if (msUntil <= 0) {
+          await replyMessage(replyToken, { type: 'text', text: '結單時間已過，請重新輸入！' });
+          return;
+        }
+        if (session.deadlineTimer) clearTimeout(session.deadlineTimer);
+        session.deadline = deadline;
+        session.deadlineTimer = setTimeout(() => autoClose(groupId), msUntil);
+        await replyMessage(replyToken, { type: 'text', text: `已更新結單時間：${formatTime(deadline)}` });
+      } else {
+        await replyMessage(replyToken, { type: 'text', text: '目前已在開單中，請直接輸入餐點！\n如要重新開單請先輸入「結單」' });
+      }
+      return;
+    }
+
+    // 未開單時：正常開單
     if (session.deadlineTimer) {
       clearTimeout(session.deadlineTimer);
       session.deadlineTimer = null;
@@ -865,6 +889,8 @@ async function handleMessage(event) {
       session.deadlineTimer = null;
     }
     session.isOpen = false;
+    const orderCount = Object.keys(session.orders).filter(uid => session.orders[uid].items.length > 0).length;
+    console.log(`[CLOSE] 手動結單，訂單筆數=${orderCount}, groupId=${groupId}`);
     const msgs = buildSummaryMessages(session, groupId);
     await replyMessage(replyToken, msgs);
     return;
