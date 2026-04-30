@@ -54,6 +54,13 @@ async function loadFromDB() {
       nicknameSettings[doc.groupId][doc.userId] = doc.value;
     }
     console.log(`資料載入完成！科室設定 ${depts.length} 筆，代號設定 ${nicknames.length} 筆`);
+    // 載入進行中的訂單
+    const orderDocs = await db.collection('orders').find({ isOpen: true }).toArray();
+    for (const doc of orderDocs) {
+      const session = getSession(doc.groupId);
+      await loadOrders(doc.groupId, session);
+    }
+    console.log(`訂單載入完成！進行中群組：${orderDocs.length} 個`);
   } catch (e) {
     console.error('載入資料失敗：', e.message);
   }
@@ -74,6 +81,64 @@ async function deleteNickname(groupId, userId) {
     await db.collection('settings').deleteOne({ type: 'nickname', groupId, userId });
   } catch (e) {
     console.error('刪除代號失敗：', e.message);
+  }
+}
+
+// ===== 訂單 MongoDB 函式 =====
+async function saveOrders(groupId, session) {
+  if (!db) return;
+  try {
+    await db.collection('orders').updateOne(
+      { groupId },
+      { $set: {
+        groupId,
+        isOpen: session.isOpen,
+        deadline: session.deadline,
+        openTime: session.openTime,
+        orders: session.orders,
+        updatedAt: new Date()
+      }},
+      { upsert: true }
+    );
+  } catch (e) {
+    console.error('儲存訂單失敗：', e.message);
+  }
+}
+
+async function loadOrders(groupId, session) {
+  if (!db) return;
+  try {
+    const doc = await db.collection('orders').findOne({ groupId });
+    if (doc && doc.isOpen) {
+      session.isOpen = doc.isOpen;
+      session.orders = doc.orders || {};
+      session.openTime = doc.openTime;
+      session.deadline = doc.deadline;
+      console.log(`[ORDER] 載入訂單：groupId=${groupId}, 人數=${Object.keys(session.orders).length}`);
+      // 恢復自動結單計時器
+      if (doc.deadline) {
+        const msUntil = new Date(doc.deadline) - Date.now();
+        if (msUntil > 0) {
+          session.deadlineTimer = setTimeout(() => autoClose(groupId), msUntil);
+          console.log(`[ORDER] 恢復自動結單計時器，剩餘 ${Math.round(msUntil/1000)} 秒`);
+        } else {
+          // 已過結單時間，立即結單
+          console.log(`[ORDER] 結單時間已過，立即執行自動結單`);
+          setTimeout(() => autoClose(groupId), 1000);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('載入訂單失敗：', e.message);
+  }
+}
+
+async function clearOrders(groupId) {
+  if (!db) return;
+  try {
+    await db.collection('orders').deleteOne({ groupId });
+  } catch (e) {
+    console.error('清除訂單失敗：', e.message);
   }
 }
 
@@ -132,16 +197,31 @@ async function replyMessage(replyToken, messages) {
   });
 }
 
-async function pushMessage(to, messages) {
-  await axios.post('https://api.line.me/v2/bot/message/push', {
-    to,
-    messages: Array.isArray(messages) ? messages : [messages]
-  }, {
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${CHANNEL_ACCESS_TOKEN}`
+async function pushMessage(to, messages, retries = 3) {
+  const msgs = Array.isArray(messages) ? messages : [messages];
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      await axios.post('https://api.line.me/v2/bot/message/push', {
+        to,
+        messages: msgs
+      }, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${CHANNEL_ACCESS_TOKEN}`
+        }
+      });
+      return;
+    } catch (e) {
+      const status = e.response?.status;
+      console.error(`[PUSH] 第${attempt}次失敗：${status} ${e.message}`);
+      if (attempt < retries && (status === 429 || status >= 500)) {
+        console.log(`[PUSH] 等待3秒後重試...`);
+        await new Promise(r => setTimeout(r, 3000));
+      } else {
+        throw e;
+      }
     }
-  });
+  }
 }
 
 // 取得 LINE 原本名稱（不使用代號）
@@ -459,6 +539,7 @@ async function autoClose(groupId) {
   } catch (e) {
     console.error('Auto close push error:', e.message);
   }
+  await clearOrders(groupId);
 }
 
 // ===== 解析結單時間 =====
@@ -849,6 +930,7 @@ async function handleMessage(event) {
     }
 
     await replyMessage(replyToken, { type: 'text', text: replyText });
+    await saveOrders(groupId, session);
     return;
   }
 
@@ -893,6 +975,7 @@ async function handleMessage(event) {
     console.log(`[CLOSE] 手動結單，訂單筆數=${orderCount}, groupId=${groupId}`);
     const msgs = buildSummaryMessages(session, groupId);
     await replyMessage(replyToken, msgs);
+    await clearOrders(groupId);
     return;
   }
 
@@ -1334,6 +1417,8 @@ async function handleMessage(event) {
     type: 'text',
     text: confirmText
   });
+  // 儲存訂單到 MongoDB
+  await saveOrders(groupId, session);
 }
 
 // ===== 新成員加入提醒 =====
