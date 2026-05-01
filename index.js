@@ -447,7 +447,8 @@ function buildSummaryMessages(session, groupId) {
       const priceStr = data.price !== null ? `${data.price}` : '';
       const noteStr = data.note ? `（${data.note}）` : '';
       const names = data.names.join('、');
-      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}（${names}）\n`;
+      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}\n`;
+      msg1 += `    ${names}\n`;
       grandQty += data.qty;
     }
   }
@@ -462,7 +463,8 @@ function buildSummaryMessages(session, groupId) {
       const priceStr = data.price !== null ? `${data.price}` : '';
       const noteStr = data.note ? `（${data.note}）` : '';
       const names = data.names.join('、');
-      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}（${names}）\n`;
+      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}\n`;
+      msg1 += `    ${names}\n`;
       grandQty += data.qty;
     }
   }
