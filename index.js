@@ -258,8 +258,10 @@ async function pushMessage(to, messages, retries = 3) {
       const status = e.response?.status;
       console.error(`[PUSH] 第${attempt}次失敗：${status} ${e.message}`);
       if (attempt < retries && (status === 429 || status >= 500)) {
-        console.log(`[PUSH] 等待10秒後重試...`);
-        await new Promise(r => setTimeout(r, 10000));
+        // 指數退避：10秒 → 20秒 → 40秒
+        const waitSec = 10 * Math.pow(2, attempt - 1);
+        console.log(`[PUSH] 等待${waitSec}秒後重試（第${attempt}次）...`);
+        await new Promise(r => setTimeout(r, waitSec * 1000));
       } else {
         throw e;
       }
