@@ -54,6 +54,20 @@ async function loadFromDB() {
       nicknameSettings[doc.groupId][doc.userId] = doc.value;
     }
     console.log(`資料載入完成！科室設定 ${depts.length} 筆，代號設定 ${nicknames.length} 筆`);
+    // 載入 pending 設定（批次設定待綁定）
+    const pendingDocs = await db.collection('settings').find({ type: 'pending' }).toArray();
+    for (const doc of pendingDocs) {
+      if (doc.pendingDepts) {
+        const pd = getPendingDeptSettings(doc.groupId);
+        Object.assign(pd, doc.pendingDepts);
+      }
+      if (doc.pendingNicknames) {
+        const pn = getPendingNicknameSettings(doc.groupId);
+        Object.assign(pn, doc.pendingNicknames);
+      }
+    }
+    console.log(`Pending 載入完成！${pendingDocs.length} 個群組有待綁定設定`);
+
     // 載入進行中的訂單
     const orderDocs = await db.collection('orders').find({ isOpen: true }).toArray();
     for (const doc of orderDocs) {
@@ -81,6 +95,35 @@ async function deleteNickname(groupId, userId) {
     await db.collection('settings').deleteOne({ type: 'nickname', groupId, userId });
   } catch (e) {
     console.error('刪除代號失敗：', e.message);
+  }
+}
+
+// ===== Pending MongoDB 函式 =====
+async function savePendingSettings(groupId, pendingDepts, pendingNicknames) {
+  if (!db) return;
+  try {
+    await db.collection('settings').updateOne(
+      { type: 'pending', groupId },
+      { $set: {
+        type: 'pending',
+        groupId,
+        pendingDepts,
+        pendingNicknames,
+        updatedAt: new Date()
+      }},
+      { upsert: true }
+    );
+  } catch (e) {
+    console.error('儲存 pending 失敗：', e.message);
+  }
+}
+
+async function clearPendingSettings(groupId) {
+  if (!db) return;
+  try {
+    await db.collection('settings').deleteOne({ type: 'pending', groupId });
+  } catch (e) {
+    console.error('清除 pending 失敗：', e.message);
   }
 }
 
@@ -215,8 +258,8 @@ async function pushMessage(to, messages, retries = 3) {
       const status = e.response?.status;
       console.error(`[PUSH] 第${attempt}次失敗：${status} ${e.message}`);
       if (attempt < retries && (status === 429 || status >= 500)) {
-        console.log(`[PUSH] 等待3秒後重試...`);
-        await new Promise(r => setTimeout(r, 3000));
+        console.log(`[PUSH] 等待10秒後重試...`);
+        await new Promise(r => setTimeout(r, 10000));
       } else {
         throw e;
       }
@@ -700,6 +743,7 @@ async function handleMessage(event) {
     }
     msg += `\n共 ${count} 人，等以上成員點餐後自動綁定！`;
     await replyMessage(replyToken, { type: 'text', text: msg });
+    await savePendingSettings(groupId, pendingDepts, pendingNicknames);
     return;
   }
 
@@ -723,6 +767,7 @@ async function handleMessage(event) {
     }
     msg += `\n共 ${count} 人，等以上成員點餐後自動綁定！`;
     await replyMessage(replyToken, { type: 'text', text: msg });
+    await savePendingSettings(groupId, pendingDepts, pendingNicknames);
     return;
   }
 
@@ -752,6 +797,7 @@ async function handleMessage(event) {
     }
     msg += `\n共 ${count} 人，等以上成員點餐後自動綁定！`;
     await replyMessage(replyToken, { type: 'text', text: msg });
+    await savePendingSettings(groupId, pendingDepts, pendingNicknames);
     return;
   }
 
@@ -1349,6 +1395,12 @@ async function handleMessage(event) {
     nicknames[userId] = pendingNicknames[lineName];
     await saveNickname(groupId, userId, nicknames[userId]);
     delete pendingNicknames[lineName];
+    // 更新 MongoDB 裡的 pending
+    if (Object.keys(pendingDepts).length === 0 && Object.keys(pendingNicknames).length === 0) {
+      await clearPendingSettings(groupId);
+    } else {
+      await savePendingSettings(groupId, pendingDepts, pendingNicknames);
+    }
   }
 
   // 最終顯示名稱：優先用代號，沒有代號才用 LINE 名稱
