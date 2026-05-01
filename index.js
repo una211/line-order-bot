@@ -570,6 +570,17 @@ function buildSlipMessages(session, groupId) {
     }
   }
 
+  // 統計總數量與總金額
+  let totalQty = 0;
+  let totalAmount = 0;
+  for (const uid of userIds) {
+    for (const item of orders[uid].items) {
+      totalQty += item.qty;
+      totalAmount += item.price !== null ? item.price * item.qty : 0;
+    }
+  }
+  msg += `\n共 ${totalQty} 份\n總金額：$${totalAmount} 元`;
+
   return [{ type: 'text', text: msg.trim() }];
 }
 
