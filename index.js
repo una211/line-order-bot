@@ -240,7 +240,7 @@ async function replyMessage(replyToken, messages) {
   });
 }
 
-async function pushMessage(to, messages, retries = 3) {
+async function pushMessage(to, messages, retries = 4) {
   const msgs = Array.isArray(messages) ? messages : [messages];
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -258,8 +258,8 @@ async function pushMessage(to, messages, retries = 3) {
       const status = e.response?.status;
       console.error(`[PUSH] 第${attempt}次失敗：${status} ${e.message}`);
       if (attempt < retries && (status === 429 || status >= 500)) {
-        // 指數退避：10秒 → 20秒 → 40秒
-        const waitSec = 10 * Math.pow(2, attempt - 1);
+        // 指數退避：30秒 → 60秒 → 120秒 → 240秒
+        const waitSec = 30 * Math.pow(2, attempt - 1);
         console.log(`[PUSH] 等待${waitSec}秒後重試（第${attempt}次）...`);
         await new Promise(r => setTimeout(r, waitSec * 1000));
       } else {
@@ -447,8 +447,7 @@ function buildSummaryMessages(session, groupId) {
       const priceStr = data.price !== null ? `${data.price}` : '';
       const noteStr = data.note ? `（${data.note}）` : '';
       const names = data.names.join('、');
-      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}\n`;
-      msg1 += `    ${names}\n`;
+      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}（${names}）\n`;
       grandQty += data.qty;
     }
   }
@@ -463,8 +462,7 @@ function buildSummaryMessages(session, groupId) {
       const priceStr = data.price !== null ? `${data.price}` : '';
       const noteStr = data.note ? `（${data.note}）` : '';
       const names = data.names.join('、');
-      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}\n`;
-      msg1 += `    ${names}\n`;
+      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}（${names}）\n`;
       grandQty += data.qty;
     }
   }
@@ -571,17 +569,6 @@ function buildSlipMessages(session, groupId) {
       msg += `${data.name}${noteStr}${priceStr}×${data.qty}\n`;
     }
   }
-
-  // 統計總數量與總金額
-  let totalQty = 0;
-  let totalAmount = 0;
-  for (const uid of userIds) {
-    for (const item of orders[uid].items) {
-      totalQty += item.qty;
-      totalAmount += item.price !== null ? item.price * item.qty : 0;
-    }
-  }
-  msg += `\n共 ${totalQty} 份\n總金額：$${totalAmount} 元`;
 
   return [{ type: 'text', text: msg.trim() }];
 }
