@@ -330,7 +330,7 @@ function getPendingDeptSettings(groupId) {
 // mode: 'order'=點餐, 'cancel'=取消
 function parseItem(str, mode) {
   if (!mode) mode = 'order';
-  let s = str.trim().replace(/\$/g, '');
+  let s = str.trim().replace(/\$/g, '').replace(/：|:/g, ' ').replace(/元$/, '');
   let qty = 1, price = null, note = null, noNote = false, noPrice = false;
 
   // 步驟1：移除數量（*N 格式）
