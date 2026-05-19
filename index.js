@@ -582,7 +582,9 @@ async function autoClose(groupId) {
   session.deadlineTimer = null;
   const msgs = buildSummaryMessages(session, groupId);
   try {
+    console.log(`[PUSH] 觸發：自動結單，${msgs.length}則，groupId=${groupId}`);
     await pushMessage(groupId, msgs);
+    console.log(`[PUSH] 成功：自動結單，${msgs.length}則，groupId=${groupId}`);
   } catch (e) {
     console.error('Auto close push error:', e.message);
   }
@@ -1495,10 +1497,12 @@ async function handleMemberJoin(event) {
     if (member.type === 'user') {
       const name = await getMemberName(groupId, member.userId);
       try {
+        console.log(`[PUSH] 觸發：新成員加入，1則，groupId=${groupId}，user=${name}`);
         await pushMessage(groupId, {
           type: 'text',
           text: `歡迎 ${name} 加入！\n請輸入「設定科室 你的部門」完成設定\n例：設定科室 行政部`
         });
+        console.log(`[PUSH] 成功：新成員加入，1則，groupId=${groupId}，user=${name}`);
       } catch (e) {
         console.error('Member join push error:', e.message);
       }
