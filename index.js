@@ -447,7 +447,8 @@ function buildSummaryMessages(session, groupId) {
       const priceStr = data.price !== null ? `${data.price}` : '';
       const noteStr = data.note ? `（${data.note}）` : '';
       const names = data.names.join('、');
-      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}（${names}）\n`;
+      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}\n`;
+      msg1 += `    ${names}\n`;
       grandQty += data.qty;
     }
   }
@@ -462,7 +463,8 @@ function buildSummaryMessages(session, groupId) {
       const priceStr = data.price !== null ? `${data.price}` : '';
       const noteStr = data.note ? `（${data.note}）` : '';
       const names = data.names.join('、');
-      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}（${names}）\n`;
+      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}\n`;
+      msg1 += `    ${names}\n`;
       grandQty += data.qty;
     }
   }
@@ -605,8 +607,8 @@ function parseDeadlineTime(timeStr) {
     now.getUTCMonth(),
     now.getUTCDate()
   ));
-  // 台灣時間的 deadline = 今天 UTC 00:00 - 8小時偏移 + 目標小時分鐘
-  const deadlineUtc = new Date(todayUtcMidnight.getTime() - taiwanOffsetMs + (h * 60 + m) * 60 * 1000);
+  // 台灣時間的 deadline 換算成 UTC = 今天 UTC 00:00 + 台灣時間目標時分 - 8小時偏移
+  const deadlineUtc = new Date(todayUtcMidnight.getTime() + (h * 60 + m) * 60 * 1000 - taiwanOffsetMs);
   return deadlineUtc;
 }
 
