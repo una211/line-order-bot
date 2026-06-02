@@ -158,17 +158,9 @@ async function loadOrders(groupId, session) {
       session.openTime = doc.openTime;
       session.deadline = doc.deadline;
       console.log(`[ORDER] 載入訂單：groupId=${groupId}, 人數=${Object.keys(session.orders).length}`);
-      // 恢復自動結單計時器
+      // 自動結單計時器已停用
       if (doc.deadline) {
-        const msUntil = new Date(doc.deadline) - Date.now();
-        if (msUntil > 0) {
-          session.deadlineTimer = setTimeout(() => autoClose(groupId), msUntil);
-          console.log(`[ORDER] 恢復自動結單計時器，剩餘 ${Math.round(msUntil/1000)} 秒`);
-        } else {
-          // 已過結單時間，立即結單
-          console.log(`[ORDER] 結單時間已過，立即執行自動結單`);
-          setTimeout(() => autoClose(groupId), 1000);
-        }
+        console.log(`[ORDER] 注意：此訂單有設定結單時間，但自動結單功能已停用，請手動結單`);
       }
     }
   } catch (e) {
@@ -240,7 +232,7 @@ async function replyMessage(replyToken, messages) {
   });
 }
 
-async function pushMessage(to, messages, retries = 4) {
+async function pushMessage(to, messages, retries = 3) {
   const msgs = Array.isArray(messages) ? messages : [messages];
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -258,8 +250,8 @@ async function pushMessage(to, messages, retries = 4) {
       const status = e.response?.status;
       console.error(`[PUSH] 第${attempt}次失敗：${status} ${e.message}`);
       if (attempt < retries && (status === 429 || status >= 500)) {
-        // 指數退避：30秒 → 60秒 → 120秒 → 240秒
-        const waitSec = 30 * Math.pow(2, attempt - 1);
+        // 指數退避：10秒 → 20秒 → 40秒
+        const waitSec = 10 * Math.pow(2, attempt - 1);
         console.log(`[PUSH] 等待${waitSec}秒後重試（第${attempt}次）...`);
         await new Promise(r => setTimeout(r, waitSec * 1000));
       } else {
@@ -330,7 +322,7 @@ function getPendingDeptSettings(groupId) {
 // mode: 'order'=點餐, 'cancel'=取消
 function parseItem(str, mode) {
   if (!mode) mode = 'order';
-  let s = str.trim().replace(/\$/g, '').replace(/：|:/g, ' ').replace(/元$/, '');
+  let s = str.trim().replace(/\$/g, '');
   let qty = 1, price = null, note = null, noNote = false, noPrice = false;
 
   // 步驟1：移除數量（*N 格式）
@@ -447,8 +439,7 @@ function buildSummaryMessages(session, groupId) {
       const priceStr = data.price !== null ? `${data.price}` : '';
       const noteStr = data.note ? `（${data.note}）` : '';
       const names = data.names.join('、');
-      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}\n`;
-      msg1 += `    ${names}\n`;
+      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}（${names}）\n`;
       grandQty += data.qty;
     }
   }
@@ -463,8 +454,7 @@ function buildSummaryMessages(session, groupId) {
       const priceStr = data.price !== null ? `${data.price}` : '';
       const noteStr = data.note ? `（${data.note}）` : '';
       const names = data.names.join('、');
-      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}\n`;
-      msg1 += `    ${names}\n`;
+      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}（${names}）\n`;
       grandQty += data.qty;
     }
   }
@@ -582,9 +572,7 @@ async function autoClose(groupId) {
   session.deadlineTimer = null;
   const msgs = buildSummaryMessages(session, groupId);
   try {
-    console.log(`[PUSH] 觸發：自動結單，${msgs.length}則，groupId=${groupId}`);
     await pushMessage(groupId, msgs);
-    console.log(`[PUSH] 成功：自動結單，${msgs.length}則，groupId=${groupId}`);
   } catch (e) {
     console.error('Auto close push error:', e.message);
   }
@@ -609,8 +597,8 @@ function parseDeadlineTime(timeStr) {
     now.getUTCMonth(),
     now.getUTCDate()
   ));
-  // 台灣時間的 deadline 換算成 UTC = 今天 UTC 00:00 + 台灣時間目標時分 - 8小時偏移
-  const deadlineUtc = new Date(todayUtcMidnight.getTime() + (h * 60 + m) * 60 * 1000 - taiwanOffsetMs);
+  // 台灣時間的 deadline = 今天 UTC 00:00 - 8小時偏移 + 目標小時分鐘
+  const deadlineUtc = new Date(todayUtcMidnight.getTime() - taiwanOffsetMs + (h * 60 + m) * 60 * 1000);
   return deadlineUtc;
 }
 
@@ -945,8 +933,8 @@ async function handleMessage(event) {
         }
         if (session.deadlineTimer) clearTimeout(session.deadlineTimer);
         session.deadline = deadline;
-        session.deadlineTimer = setTimeout(() => autoClose(groupId), msUntil);
-        await replyMessage(replyToken, { type: 'text', text: `已更新結單時間：${formatTime(deadline)}` });
+        session.deadlineTimer = null;
+        await replyMessage(replyToken, { type: 'text', text: `已更新結單時間：${formatTime(deadline)}（提醒用，不會自動結單）` });
       } else {
         await replyMessage(replyToken, { type: 'text', text: '目前已在開單中，請直接輸入餐點！\n如要重新開單請先輸入「結單」' });
       }
@@ -977,8 +965,8 @@ async function handleMessage(event) {
         return;
       }
       session.deadline = deadline;
-      session.deadlineTimer = setTimeout(() => autoClose(groupId), msUntil);
-      replyText = `開始點餐！將於 ${formatTime(deadline)} 自動結單\n直接輸入餐點即可點餐！\nEX：雞腿便當（飯換菜）$110*3`;
+      session.deadlineTimer = null;
+      replyText = `開始點餐！結單時間：${formatTime(deadline)}（提醒用，不會自動結單）\n直接輸入餐點即可點餐！\nEX：雞腿便當（飯換菜）$110*3`;
     }
 
     await replyMessage(replyToken, { type: 'text', text: replyText });
@@ -1001,7 +989,7 @@ async function handleMessage(event) {
     }
     if (session.deadlineTimer) clearTimeout(session.deadlineTimer);
     session.deadline = deadline;
-    session.deadlineTimer = setTimeout(() => autoClose(groupId), msUntil);
+    session.deadlineTimer = null;
 
     if (!session.isOpen) {
       // 未開單 → 同時觸發開單
@@ -1497,12 +1485,10 @@ async function handleMemberJoin(event) {
     if (member.type === 'user') {
       const name = await getMemberName(groupId, member.userId);
       try {
-        console.log(`[PUSH] 觸發：新成員加入，1則，groupId=${groupId}，user=${name}`);
         await pushMessage(groupId, {
           type: 'text',
           text: `歡迎 ${name} 加入！\n請輸入「設定科室 你的部門」完成設定\n例：設定科室 行政部`
         });
-        console.log(`[PUSH] 成功：新成員加入，1則，groupId=${groupId}，user=${name}`);
       } catch (e) {
         console.error('Member join push error:', e.message);
       }
