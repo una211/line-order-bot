@@ -439,7 +439,8 @@ function buildSummaryMessages(session, groupId) {
       const priceStr = data.price !== null ? `${data.price}` : '';
       const noteStr = data.note ? `（${data.note}）` : '';
       const names = data.names.join('、');
-      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}（${names}）\n`;
+      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}\n`;
+      msg1 += `    ${names}\n`;
       grandQty += data.qty;
     }
   }
@@ -454,7 +455,8 @@ function buildSummaryMessages(session, groupId) {
       const priceStr = data.price !== null ? `${data.price}` : '';
       const noteStr = data.note ? `（${data.note}）` : '';
       const names = data.names.join('、');
-      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}（${names}）\n`;
+      msg1 += `  ${data.name}${noteStr}${priceStr}×${data.qty}\n`;
+      msg1 += `    ${names}\n`;
       grandQty += data.qty;
     }
   }
@@ -996,7 +998,7 @@ async function handleMessage(event) {
       session.isOpen = true;
       session.openTime = new Date();
       session.orders = {};
-      await replyMessage(replyToken, { type: 'text', text: `開始點餐！將於 ${formatTime(deadline)} 自動結單\n直接輸入餐點即可點餐！\nEX：雞腿便當（飯換菜）$110*3` });
+      await replyMessage(replyToken, { type: 'text', text: `開始點餐！結單時間：${formatTime(deadline)}（提醒用，不會自動結單）\n直接輸入餐點即可點餐！\nEX：雞腿便當（飯換菜）$110*3` });
     } else {
       // 已開單 → 只更新結單時間
       await replyMessage(replyToken, { type: 'text', text: `已更新結單時間：${formatTime(deadline)}` });
@@ -1029,22 +1031,35 @@ async function handleMessage(event) {
     }
     const status = session.isOpen ? '收單中' : '已結單';
     const deadlineStr = session.deadline ? `　結單：${formatTime(session.deadline)}` : '';
-    let msg = `${status}${deadlineStr}\n\n目前訂單\n`;
+    let msg = `${status}${deadlineStr}\n\n目前訂單\n\n`;
     let total = 0;
     let totalQty = 0;
+
+    // 以品項為主軸合併
+    const itemMap = {};
     for (const uid of orderUserIds) {
       const o = session.orders[uid];
-      const itemStrs = o.items.map(item => {
-        const priceStr = item.price !== null ? `${item.price}` : '';
-        const qtyStr = `×${item.qty}`;
-        const noteStr = item.note ? `（${item.note}）` : '';
-        return `${item.name}${priceStr}${qtyStr}${noteStr}`;
-      });
-      const personTotal = o.items.reduce((s, i) => s + (i.price !== null ? i.price * i.qty : 0), 0);
-      msg += `  ${o.name}：${itemStrs.join('、')}　小計 $${personTotal}\n`;
-      total += personTotal;
-      totalQty += o.items.reduce((s, i) => s + i.qty, 0);
+      for (const item of o.items) {
+        const priceKey = item.price !== null ? item.price : 'null';
+        const noteKey = item.note || '';
+        const key = `${item.name}||${noteKey}||${priceKey}`;
+        if (!itemMap[key]) {
+          itemMap[key] = { name: item.name, note: item.note || null, price: item.price, qty: 0, names: [] };
+        }
+        itemMap[key].qty += item.qty;
+        if (!itemMap[key].names.includes(o.name)) itemMap[key].names.push(o.name);
+        total += item.price !== null ? item.price * item.qty : 0;
+        totalQty += item.qty;
+      }
     }
+
+    for (const [key, data] of Object.entries(itemMap)) {
+      const priceStr = data.price !== null ? `${data.price}` : '';
+      const noteStr = data.note ? `（${data.note}）` : '';
+      msg += `${data.name}${noteStr}${priceStr}×${data.qty}\n`;
+      msg += `  ${data.names.join('、')}\n`;
+    }
+
     msg += `\n共 ${orderUserIds.length} 人，${totalQty} 份\n總金額：$${total}`;
     await replyMessage(replyToken, { type: 'text', text: msg });
     return;
