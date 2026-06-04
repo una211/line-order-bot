@@ -322,7 +322,7 @@ function getPendingDeptSettings(groupId) {
 // mode: 'order'=點餐, 'cancel'=取消
 function parseItem(str, mode) {
   if (!mode) mode = 'order';
-  let s = str.trim().replace(/\$/g, '');
+  let s = str.trim().replace(/\$/g, '').replace(/：|:/g, ' ').replace(/元$/, '');
   let qty = 1, price = null, note = null, noNote = false, noPrice = false;
 
   // 步驟1：移除數量（*N 格式）
@@ -563,6 +563,17 @@ function buildSlipMessages(session, groupId) {
       msg += `${data.name}${noteStr}${priceStr}×${data.qty}\n`;
     }
   }
+
+  // 統計總數量與總金額
+  let totalQty = 0;
+  let totalAmount = 0;
+  for (const uid of userIds) {
+    for (const item of orders[uid].items) {
+      totalQty += item.qty;
+      totalAmount += item.price !== null ? item.price * item.qty : 0;
+    }
+  }
+  msg += `\n共 ${totalQty} 份\n總金額：$${totalAmount} 元`;
 
   return [{ type: 'text', text: msg.trim() }];
 }
