@@ -435,7 +435,7 @@ function buildSummaryMessages(session, groupId) {
     const deptTotal = calcDeptTotal(itemMap);
     grandTotal += deptTotal;
     msg1 += `\n${dept}　小計 $${deptTotal}\n`;
-    for (const [key, data] of Object.entries(itemMap)) {
+    for (const [key, data] of Object.entries(itemMap).sort((a, b) => a[1].name.localeCompare(b[1].name, 'zh-Hant'))) {
       const priceStr = data.price !== null ? `${data.price}` : '';
       const noteStr = data.note ? `（${data.note}）` : '';
       const names = data.names.join('、');
@@ -451,7 +451,7 @@ function buildSummaryMessages(session, groupId) {
     const deptTotal = calcDeptTotal(itemMap);
     grandTotal += deptTotal;
     msg1 += `\n未設定科室　小計 $${deptTotal}\n`;
-    for (const [key, data] of Object.entries(itemMap)) {
+    for (const [key, data] of Object.entries(itemMap).sort((a, b) => a[1].name.localeCompare(b[1].name, 'zh-Hant'))) {
       const priceStr = data.price !== null ? `${data.price}` : '';
       const noteStr = data.note ? `（${data.note}）` : '';
       const names = data.names.join('、');
@@ -484,7 +484,7 @@ function buildSummaryMessages(session, groupId) {
   }
 
   let msg2 = '';
-  for (const [key, data] of Object.entries(allItemMap)) {
+  for (const [key, data] of Object.entries(allItemMap).sort((a, b) => a[1].name.localeCompare(b[1].name, 'zh-Hant'))) {
     const priceStr = data.price !== null ? `${data.price}` : '';
     const noteStr = data.note ? `（${data.note}）` : '';
     msg2 += `${data.name}${noteStr}${priceStr}×${data.qty}\n`;
@@ -545,7 +545,7 @@ function buildSlipMessages(session, groupId) {
   for (const [dept, members] of Object.entries(deptMap)) {
     const itemMap = buildDeptItemMap(members);
     msg += `第${deptIndex}張單（${dept}）\n`;
-    for (const [key, data] of Object.entries(itemMap)) {
+    for (const [key, data] of Object.entries(itemMap).sort((a, b) => a[1].name.localeCompare(b[1].name, 'zh-Hant'))) {
       const priceStr = data.price !== null ? `${data.price}` : '';
       const noteStr = data.note ? `（${data.note}）` : '';
       msg += `${data.name}${noteStr}${priceStr}×${data.qty}\n`;
@@ -557,7 +557,7 @@ function buildSlipMessages(session, groupId) {
   if (noDept.length > 0) {
     const itemMap = buildDeptItemMap(noDept);
     msg += `第${deptIndex}張單（未設定科室）\n`;
-    for (const [key, data] of Object.entries(itemMap)) {
+    for (const [key, data] of Object.entries(itemMap).sort((a, b) => a[1].name.localeCompare(b[1].name, 'zh-Hant'))) {
       const priceStr = data.price !== null ? `${data.price}` : '';
       const noteStr = data.note ? `（${data.note}）` : '';
       msg += `${data.name}${noteStr}${priceStr}×${data.qty}\n`;
@@ -1064,7 +1064,7 @@ async function handleMessage(event) {
       }
     }
 
-    for (const [key, data] of Object.entries(itemMap)) {
+    for (const [key, data] of Object.entries(itemMap).sort((a, b) => a[1].name.localeCompare(b[1].name, 'zh-Hant'))) {
       const priceStr = data.price !== null ? `${data.price}` : '';
       const noteStr = data.note ? `（${data.note}）` : '';
       msg += `${data.name}${noteStr}${priceStr}×${data.qty}\n`;
